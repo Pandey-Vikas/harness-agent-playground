@@ -1,0 +1,1 @@
+﻿Plan for the NVDA 12-month investment thesis demo.

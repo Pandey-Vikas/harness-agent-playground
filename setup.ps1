@@ -1,13 +1,12 @@
 #!/usr/bin/env pwsh
-# Harness Agent Playground guided setup: launches a browser wizard that signs you into Azure,
-# picks a Foundry resource + deployment, writes .env, and starts the app.
+# Harness Agent Playground guided setup: launches the six-step wizard on http://localhost:3100.
 
 $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot
 
 Write-Host ''
 Write-Host 'Harness Agent Playground setup wizard' -ForegroundColor Cyan
-Write-Host '---------------------'
+Write-Host '-------------------------------------'
 
 try {
     $nodeVersion = (& node --version).TrimStart('v')
@@ -32,7 +31,6 @@ try {
     exit 1
 }
 
-# Prevent az from prompting for an auto-upgrade during wizard calls.
 & az config set auto-upgrade.enable=no auto-upgrade.prompt=no --only-show-errors 2>&1 | Out-Null
 
 $port = if ($env:SETUP_PORT) { [int]$env:SETUP_PORT } else { 3100 }
@@ -43,8 +41,7 @@ Write-Host "Opening wizard at $url" -ForegroundColor Cyan
 Write-Host 'Press Ctrl+C in this window to abort.'
 Write-Host ''
 
-# Start the wizard server in the background, wait briefly for it to bind, then open the browser.
-$server = Start-Process -FilePath 'node' -ArgumentList '--disable-warning=ExperimentalWarning', 'scripts/setup-server.js' -PassThru -NoNewWindow
+$server = Start-Process -FilePath 'node' -ArgumentList '--disable-warning=ExperimentalWarning', 'ui/setup/setup-server.js' -PassThru -NoNewWindow
 $deadline = (Get-Date).AddSeconds(10)
 while ((Get-Date) -lt $deadline) {
     try {

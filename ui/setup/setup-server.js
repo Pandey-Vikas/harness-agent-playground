@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft. All rights reserved.
+// Six-step setup wizard: signs into Azure, provisions Foundry, writes .env, launches the app.
+
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -7,7 +10,7 @@ import { dirname, join } from 'node:path';
 
 const execFileAsync = promisify(execFile);
 const scriptDir = dirname(fileURLToPath(import.meta.url));
-const rootDir = join(scriptDir, '..');
+const rootDir = join(scriptDir, '..', '..');
 const envPath = join(rootDir, '.env');
 const htmlPath = join(scriptDir, 'setup.html');
 const azCommand = process.platform === 'win32' ? 'az.cmd' : 'az';
@@ -145,37 +148,57 @@ function sendJson(response, status, value) {
   response.end(JSON.stringify(value));
 }
 
+function buildProjectEndpoint(accountName, projectName) {
+  if (!accountName || !projectName) return '';
+  return `https://${accountName}.services.ai.azure.com/api/projects/${projectName}`;
+}
+
 function writeEnv(values) {
+  const projectEndpoint = values.projectEndpoint
+    || buildProjectEndpoint(values.foundryName, values.projectName || 'default-project');
   const lines = [
-    `MODEL_PROVIDER=${values.provider}`,
+    `MODEL_PROVIDER=${values.provider || 'foundry'}`,
     `PORT=${values.port || 3000}`,
-    'DATABASE_PATH=./data/router-playground.db',
+    `HARNESS_PORT=${values.harnessPort || 5099}`,
+    'DATABASE_PATH=./data/harness-playground.db',
     '',
-    `AZURE_OPENAI_ENDPOINT=${values.endpoint}`,
-    `MODEL_ROUTER_DEPLOYMENT_NAME=${values.deployment}`,
-    `AZURE_OPENAI_API_VERSION=${values.apiVersion}`
+    '# --- Foundry (used by the .NET HarnessAgentHost) ---',
+    `FOUNDRY_PROJECT_ENDPOINT=${projectEndpoint}`,
+    `FOUNDRY_MODEL=${values.deployment || 'gpt-4o-mini'}`,
+    '',
+    '# --- Foundry resource metadata (for the UI status pill) ---',
   ];
-  if (values.deploymentBalanced) lines.push(`MODEL_ROUTER_DEPLOYMENT_BALANCED=${values.deploymentBalanced}`);
-  if (values.deploymentCost) lines.push(`MODEL_ROUTER_DEPLOYMENT_COST=${values.deploymentCost}`);
-  if (values.deploymentQuality) lines.push(`MODEL_ROUTER_DEPLOYMENT_QUALITY=${values.deploymentQuality}`);
   if (values.foundryName) lines.push(`AZURE_FOUNDRY_RESOURCE_NAME=${values.foundryName}`);
   if (values.foundryResourceGroup) lines.push(`AZURE_FOUNDRY_RESOURCE_GROUP=${values.foundryResourceGroup}`);
+  if (values.endpoint) lines.push(`AZURE_OPENAI_ENDPOINT=${values.endpoint}`);
   writeFileSync(envPath, lines.join('\n') + '\n', 'utf8');
 }
 
-let launchedChild = null;
+let launchedNode = null;
+let launchedDotnet = null;
 let launchedPort = 3000;
 
 function launchApp(port) {
   launchedPort = port;
-  if (launchedChild) return;
   mkdirSync(join(rootDir, 'data'), { recursive: true });
-  launchedChild = spawn(process.execPath, [
-    '--env-file-if-exists=.env',
-    '--disable-warning=ExperimentalWarning',
-    'src/server.js'
-  ], { cwd: rootDir, detached: true, windowsHide: true, stdio: 'ignore' });
-  launchedChild.unref();
+  if (!launchedDotnet) {
+    launchedDotnet = spawn('dotnet', ['run', '--project', 'agent/HarnessAgentHost', '--no-launch-profile'], {
+      cwd: rootDir,
+      detached: true,
+      windowsHide: true,
+      stdio: 'ignore',
+      shell: process.platform === 'win32'
+    });
+    launchedDotnet.unref();
+  }
+  if (!launchedNode) {
+    launchedNode = spawn(process.execPath, [
+      '--env-file-if-exists=.env',
+      '--disable-warning=ExperimentalWarning',
+      'ui/server.js'
+    ], { cwd: rootDir, detached: true, windowsHide: true, stdio: 'ignore' });
+    launchedNode.unref();
+  }
 }
 
 const server = createServer(async (request, response) => {
@@ -257,10 +280,7 @@ const server = createServer(async (request, response) => {
       const filtered = (accounts || [])
         .filter(a => ['AIServices', 'OpenAI'].includes(a.kind))
         .map(a => {
-          // AI Services accounts route AOAI-compatible calls through .cognitiveservices.azure.com.
-          // Legacy OpenAI kind uses .openai.azure.com.
-          // The regional endpoint (properties.endpoints[*] all point to <region>.api.cognitive.microsoft.com)
-          // does NOT route chat completions to a specific resource — never use it here.
+          // AIServices routes AOAI-compatible calls through .cognitiveservices.azure.com; legacy OpenAI uses .openai.azure.com.
           const suffix = a.kind === 'OpenAI' ? 'openai.azure.com' : 'cognitiveservices.azure.com';
           const endpoint = `https://${a.name}.${suffix}`;
           return {
@@ -336,8 +356,6 @@ const server = createServer(async (request, response) => {
           '--custom-domain', name,
           '--yes'
         ]);
-        // Create a default Foundry project so the account is visible in the new Foundry portal (ai.azure.com)
-        // and so project-scoped roles (Azure AI User / Azure AI Project Manager) can be assigned.
         let project = null;
         try {
           const sub = await az(['account', 'show']);
@@ -350,9 +368,7 @@ const server = createServer(async (request, response) => {
               location: created.location || location
             });
           }
-        } catch (e) { /* project best-effort — account still usable via classic path */ }
-        // Grant the signed-in user the minimum roles needed for Entra ID chat completions to work immediately.
-        // Account-scope: Cognitive Services User + OpenAI User. Project-scope: Azure AI User + Project Manager.
+        } catch (e) { /* project best-effort */ }
         const grantedRoles = [];
         const skippedRoles = [];
         try {
@@ -376,7 +392,6 @@ const server = createServer(async (request, response) => {
                 grantedRoles.push(role);
               } catch (e) {
                 const reason = String(e.stderr || e.message).split('\n')[0].slice(0, 200);
-                // If the role already exists on this scope, count it as a success — the user does have access.
                 if (/already exists|role assignment.*exists/i.test(reason)) grantedRoles.push(role);
                 else skippedRoles.push({ role, reason });
               }
@@ -387,11 +402,10 @@ const server = createServer(async (request, response) => {
         } catch (e) {
           skippedRoles.push({ role: 'ALL', reason: String(e.stderr || e.message).slice(0, 200) });
         }
-        // Fail visibly if none of the data-plane roles landed at account scope — the demo will 401 otherwise.
         const hasDataPlane = grantedRoles.includes('Cognitive Services User') || grantedRoles.includes('Cognitive Services OpenAI User');
         if (!hasDataPlane) {
           return sendJson(response, 500, {
-            error: 'Account was created but no data-plane role could be granted. Chat completions will return 401. First skipped role: ' +
+            error: 'Account was created but no data-plane role could be granted. First skipped role: ' +
               (skippedRoles[0]?.role || 'unknown') + ' — ' + (skippedRoles[0]?.reason || 'no details') +
               '. Fix: grant "Cognitive Services User" and "Cognitive Services OpenAI User" manually, then click Refresh.',
             name: created.name,
@@ -407,9 +421,8 @@ const server = createServer(async (request, response) => {
           project: project?.name || null,
           grantedRoles,
           skippedRoles,
-          // Newly-created accounts are always AIServices kind — use the .cognitiveservices.azure.com subdomain,
-          // NOT the regional endpoint that comes back in created.properties.endpoint.
-          endpoint: `https://${created.name || name}.cognitiveservices.azure.com`
+          endpoint: `https://${created.name || name}.cognitiveservices.azure.com`,
+          projectEndpoint: buildProjectEndpoint(created.name || name, project?.name || 'default-project')
         });
       } catch (error) {
         return sendJson(response, 500, { error: String(error.stderr || error.message) });
@@ -427,7 +440,6 @@ const server = createServer(async (request, response) => {
         const sub = await az(['account', 'show']);
         if (!oid || !sub?.id) throw new Error('Could not resolve signed-in user or subscription');
         const accountScope = `/subscriptions/${sub.id}/resourceGroups/${resourceGroup}/providers/Microsoft.CognitiveServices/accounts/${account}`;
-        // Look up the account's location so we can create a project in the matching region if one doesn't exist yet.
         let project = null;
         try {
           const acct = await az(['cognitiveservices', 'account', 'show', '--name', account, '--resource-group', resourceGroup]);
@@ -460,57 +472,14 @@ const server = createServer(async (request, response) => {
             skipped.push({ role, reason: String(e.stderr || e.message).split('\n')[0].slice(0, 120) });
           }
         }
-        return sendJson(response, 200, { granted, skipped, project: project?.name || null, upn: me?.userPrincipalName || me?.mail || null });
+        return sendJson(response, 200, {
+          granted, skipped,
+          project: project?.name || null,
+          projectEndpoint: buildProjectEndpoint(account, project?.name || 'default-project'),
+          upn: me?.userPrincipalName || me?.mail || null
+        });
       } catch (error) {
         return sendJson(response, 500, { error: String(error.stderr || error.message) });
-      }
-    }
-
-    if (url.pathname === '/api/deploy-router' && request.method === 'POST') {
-      const { account, resourceGroup, deploymentName, mode, capacity, version } = await readJson(request);
-      if (!account || !resourceGroup || !deploymentName || !mode) {
-        return sendJson(response, 400, { error: 'account, resourceGroup, deploymentName and mode are required' });
-      }
-      if (!['balanced', 'cost', 'quality'].includes(String(mode).toLowerCase())) {
-        return sendJson(response, 400, { error: 'mode must be balanced, cost or quality' });
-      }
-      try {
-        const sub = await az(['account', 'show']);
-        const subscriptionId = sub?.id;
-        if (!subscriptionId) throw new Error('Could not resolve subscription id from az account show');
-        const tokenObj = await az(['account', 'get-access-token', '--resource', 'https://management.azure.com']);
-        const token = tokenObj?.accessToken;
-        if (!token) throw new Error('Could not acquire ARM access token');
-        const url = `https://management.azure.com/subscriptions/${encodeURIComponent(subscriptionId)}/resourceGroups/${encodeURIComponent(resourceGroup)}/providers/Microsoft.CognitiveServices/accounts/${encodeURIComponent(account)}/deployments/${encodeURIComponent(deploymentName)}?api-version=2025-10-01-preview`;
-        const body = {
-          sku: { name: 'GlobalStandard', capacity: Number(capacity) || 10 },
-          properties: {
-            model: { format: 'OpenAI', name: 'model-router', version: version || '2025-11-18' },
-            routing: { mode: String(mode).toLowerCase() }
-          }
-        };
-        const res = await fetch(url, {
-          method: 'PUT',
-          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(180_000)
-        });
-        const text = await res.text();
-        if (!res.ok) {
-          let msg = text;
-          try { msg = JSON.parse(text)?.error?.message || text; } catch { /* keep raw */ }
-          throw new Error(`Deploy failed (${res.status}): ${String(msg).slice(0, 300)}`);
-        }
-        const parsed = text ? JSON.parse(text) : {};
-        return sendJson(response, 200, {
-          name: parsed.name || deploymentName,
-          mode: String(mode).toLowerCase(),
-          model: parsed.properties?.model?.name || 'model-router',
-          version: parsed.properties?.model?.version || (version || '2025-11-18'),
-          provisioningState: parsed.properties?.provisioningState || 'Requested'
-        });
-      } catch (error) {
-        return sendJson(response, 500, { error: String(error?.stderr || error?.message || error) });
       }
     }
 
@@ -525,17 +494,6 @@ const server = createServer(async (request, response) => {
         sku: d.sku?.name
       }));
       return sendJson(response, 200, mapped);
-    }
-
-    if (url.pathname === '/api/keys' && request.method === 'GET') {
-      const name = url.searchParams.get('name');
-      const rg = url.searchParams.get('resourceGroup');
-      try {
-        const keys = await az(['cognitiveservices', 'account', 'keys', 'list', '--name', name, '--resource-group', rg]);
-        return sendJson(response, 200, { key: keys?.key1 || null });
-      } catch (error) {
-        return sendJson(response, 200, { key: null, error: String(error.stderr || error.message) });
-      }
     }
 
     if (url.pathname === '/api/save-and-launch' && request.method === 'POST') {
@@ -568,7 +526,6 @@ const server = createServer(async (request, response) => {
   }
 });
 
-// Prerequisite check registry: each entry knows how to detect and (optionally) install a tool.
 const prerequisites = [
   {
     key: 'node',
@@ -578,7 +535,19 @@ const prerequisites = [
       const { stdout } = await execFileAsync(process.execPath, ['--version']);
       return { installed: true, version: stdout.trim().replace(/^v/, '') };
     },
-    winget: null // Wizard already runs on Node — self-referential install not supported here.
+    winget: null
+  },
+  {
+    key: 'dotnet',
+    label: '.NET SDK',
+    required: '10.0 or later (Agent Framework Harness targets net10.0)',
+    detect: async () => {
+      const { stdout } = await execFileAsync('dotnet', ['--list-sdks'], { shell: useShell, windowsHide: true, timeout: 15_000 });
+      const versions = stdout.split(/\r?\n/).map((l) => l.trim().split(' ')[0]).filter(Boolean);
+      const highest = versions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).pop();
+      return { installed: !!highest, version: highest };
+    },
+    winget: 'Microsoft.DotNet.SDK.10'
   },
   {
     key: 'azcli',
@@ -606,7 +575,7 @@ const prerequisites = [
   {
     key: 'git',
     label: 'Git',
-    required: 'any recent version (only for Auto Evaluation toolkit)',
+    required: 'any recent version',
     detect: async () => {
       const { stdout } = await execFileAsync('git', ['--version'], { shell: useShell, windowsHide: true, timeout: 10_000 });
       return { installed: true, version: stdout.trim().replace(/^git version /i, '') };

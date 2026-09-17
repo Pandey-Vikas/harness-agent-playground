@@ -1,0 +1,1 @@
+﻿Approved-pending research plan for a fabricated NVDA 12-month investment-thesis walkthrough.

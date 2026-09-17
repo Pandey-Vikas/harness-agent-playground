@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>HarnessAgentHost</RootNamespace>
+    <!-- MAAI001: Microsoft.Agents.AI experimental surface. OPENAI001: OpenAI Responses experimental surface. -->
+    <NoWarn>$(NoWarn);MAAI001;OPENAI001</NoWarn>
+  </PropertyGroup>
+
+  <!--
+    Floating major versions: NuGet resolves to the latest available in the CFS proxy.
+    Include prerelease so Harness/Foundry preview builds can still be picked up if needed.
+    -->
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.*" />
+    <PackageReference Include="Azure.AI.Projects" Version="3.*-*" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.*-*" />
+    <PackageReference Include="Microsoft.Agents.AI.Harness" Version="1.*-*" />
+    <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="1.*-*" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,1 @@
+﻿Approved-pending plan for a 12-month NVDA investment thesis research walkthrough.

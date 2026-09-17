@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Harness Agent Playground</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('harnessagent.theme');
+          if (t !== 'dark' && t !== 'light') t = 'dark';
+          document.documentElement.setAttribute('data-theme', t);
+        } catch { document.documentElement.setAttribute('data-theme', 'dark'); }
+      })();
+    </script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="eyebrow">MICROSOFT FOUNDRY</span>
+        <h1>Harness Agent Playground</h1>
+      </div>
+      <div class="topbar-status">
+        <span class="pill" id="modelPill" title="Foundry model deployment">model: <strong id="modelLabel">…</strong></span>
+        <span class="pill" id="scenarioPill" hidden title="Current scenario">scenario: <strong id="scenarioPillLabel">—</strong></span>
+        <span class="pill" id="modePill" hidden title="Current harness mode">mode: <strong id="modeLabel">—</strong></span>
+        <button type="button" class="icon-btn" id="themeToggle" title="Toggle theme" aria-label="Toggle color theme">
+          <svg class="theme-icon theme-icon-sun" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="theme-icon theme-icon-moon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <button type="button" id="launchSetupButton" class="link">setup wizard</button>
+      </div>
+    </header>
+
+    <main id="app">
+      <!-- Landing view -->
+      <section id="landingView" class="landing">
+        <div class="landing-intro">
+          <h2>Pick a scenario</h2>
+          <p>Three end-to-end demos of the Agent Framework Harness — each exercises most of the capability matrix.
+            Click a card to start; the harness spins up in <strong>plan</strong> mode.</p>
+        </div>
+        <div class="cards" id="scenarioCards">
+          <!-- filled by app.js -->
+        </div>
+      </section>
+
+      <!-- Playground view -->
+      <section id="playgroundView" class="playground" hidden>
+        <div class="scenario-header">
+          <button type="button" class="link back-link" id="backToLanding">← All scenarios</button>
+          <div>
+            <div class="scenario-domain" id="scenarioDomain"></div>
+            <h2 id="scenarioTitle"></h2>
+            <p class="scenario-desc" id="scenarioDesc"></p>
+          </div>
+        </div>
+
+        <div class="play-grid">
+          <div class="chat-column">
+            <div class="chat-log" id="chatLog"></div>
+
+            <div class="thinker" id="thinker" hidden aria-live="polite">
+              <span class="thinker-spinner" aria-hidden="true"></span>
+              <span class="thinker-text">Thinking…</span>
+            </div>
+
+            <form class="composer" id="composer">
+              <textarea id="promptInput" rows="3" placeholder="Ask the harness agent…" required></textarea>
+              <div class="composer-actions">
+                <div class="composer-left">
+                  <button type="button" class="secondary" id="resetButton" title="Rotate the AgentSession, keep the scenario">Reset</button>
+                  <button type="button" class="secondary" id="summaryButton" title="Show execution summary">Summary</button>
+                </div>
+                <div class="composer-right">
+                  <button type="button" class="secondary danger" id="stopButton" hidden title="Abort the current run">Stop</button>
+                  <button type="submit" class="primary" id="sendButton">Send</button>
+                </div>
+              </div>
+            </form>
+          </div>
+
+          <aside class="side-column">
+            <section class="side-panel">
+              <div class="side-header">
+                <h3>Todos</h3>
+                <span class="side-count" id="todosCount">0</span>
+              </div>
+              <ul class="todos" id="todosList">
+                <li class="side-empty">No todos yet.</li>
+              </ul>
+            </section>
+
+            <section class="side-panel">
+              <div class="side-header"><h3>Capabilities</h3></div>
+              <ul class="caps" id="capsList"></ul>
+              <p class="caps-legend"><span class="dot dot-hi"></span> highlighted for this scenario <span class="dot dot-ex"></span> exercised in this session</p>
+            </section>
+
+            <section class="side-panel">
+              <div class="side-header">
+                <h3>Tool activity</h3>
+                <button type="button" class="link" id="clearToolsButton">clear</button>
+              </div>
+              <ol class="tool-log" id="toolLog">
+                <li class="side-empty">Waiting for a run…</li>
+              </ol>
+            </section>
+
+            <section class="side-panel">
+              <div class="side-header"><h3>Runtime</h3></div>
+              <dl class="kv">
+                <dt>endpoint</dt><dd id="endpointLabel">—</dd>
+                <dt>tokens</dt><dd id="tokenLabel">—</dd>
+              </dl>
+            </section>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <div class="modal-backdrop" id="summaryModal" hidden>
+      <div class="modal">
+        <div class="modal-header">
+          <div>
+            <div class="scenario-domain" id="summaryDomain"></div>
+            <h2 id="summaryTitle">Execution summary</h2>
+          </div>
+          <button type="button" class="link" id="closeSummary" aria-label="Close">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="summary-stats" id="summaryStats"></div>
+          <h3 class="summary-h3">Capability matrix</h3>
+          <table class="caps-table" id="summaryCaps"></table>
+          <h3 class="summary-h3">Tools called</h3>
+          <div class="tools-called" id="summaryTools"></div>
+          <h3 class="summary-h3">Final todo list</h3>
+          <ul class="todos summary-todos" id="summaryTodos"></ul>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="secondary" id="summaryBackToLanding">Back to scenarios</button>
+          <button type="button" class="primary" id="summaryContinue">Keep working</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

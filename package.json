@@ -1,15 +1,16 @@
 {
   "name": "harness-agent-playground",
-  "version": "0.1.0",
-  "description": "Harness Agent Playground for Microsoft Foundry — six-step setup wizard + scenario runner.",
+  "version": "0.2.0",
+  "description": "Harness Agent demo for Microsoft Foundry — Node.js UI in front of a .NET Microsoft.Agents.AI.Harness host.",
   "type": "module",
   "private": true,
   "engines": {
     "node": ">=22.5.0"
   },
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/server.js",
-    "dev": "node --disable-warning=ExperimentalWarning --watch --env-file-if-exists=.env src/server.js",
-    "wizard": "node --disable-warning=ExperimentalWarning scripts/setup-server.js"
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env ui/server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch --env-file-if-exists=.env ui/server.js",
+    "wizard": "node --disable-warning=ExperimentalWarning ui/setup/setup-server.js",
+    "agent": "dotnet run --project agent/HarnessAgentHost"
   }
 }

@@ -50,7 +50,7 @@
 <div class="app">
   <header>
     <h1>Harness Agent Playground setup</h1>
-    <p>Connect your Microsoft Foundry Model Router deployment. This wizard writes <code>.env</code> and launches the app.</p>
+    <p>Provision a Microsoft Foundry project and pick a chat deployment for the Harness Agent. The wizard writes <code>.env</code> and launches the app.</p>
   </header>
   <div class="steps">
     <span id="s1">1. Prerequisites</span>
@@ -69,9 +69,6 @@ const state = {
   subscription: null,
   foundry: null,
   deployment: null,
-  deploymentBalanced: null,
-  deploymentCost: null,
-  deploymentQuality: null,
   apiVersion: '2024-10-21'
 };
 
@@ -557,149 +554,72 @@ function wireGrantAccess() {
 }
 
 async function renderDeployment() {
-  loading('Select deployments', 'Loading deployments in ' + state.foundry.name + '…');
+  loading('Select a chat deployment', 'Loading deployments in ' + state.foundry.name + '…');
   try {
     const query = '?name=' + encodeURIComponent(state.foundry.name) + '&resourceGroup=' + encodeURIComponent(state.foundry.resourceGroup);
     const deps = await api('/api/deployments' + query);
-    const routerDeps = deps.filter(d => (d.model || '').toLowerCase().includes('router'));
     const accessBlock =
       '<div style="border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
         '<div style="flex:1;min-width:220px"><strong>Data-plane access</strong><br><small class="sub">Grant your account the minimum Foundry / Cognitive Services roles on <code>' + escapeHtml(state.foundry.name) + '</code> so Entra ID chat calls work.</small></div>' +
         '<button class="secondary" id="grantAccessBtn" type="button">Grant me access</button>' +
         '<span id="grantAccessStatus" class="sub" style="min-width:100%"></span>' +
       '</div>';
-    const help =
+    const foundryLink = 'https://ai.azure.com';
+    const deployHelp =
       '<details style="margin-bottom:16px;border:1px solid var(--border);border-radius:6px;padding:12px 14px">' +
-        '<summary style="cursor:pointer;font-weight:600">How to create three model-router deployments</summary>' +
-        '<p class="sub" style="margin-top:12px">To see real differences between Balanced, Cost, and Quality modes you need three separate <code>model-router</code> deployments in this resource, each configured with a different routing mode.</p>' +
-        '<p style="font-weight:600;margin-bottom:4px">Via Foundry Portal (recommended, only place that exposes routing mode):</p>' +
+        '<summary style="cursor:pointer;font-weight:600">How to add a chat deployment</summary>' +
+        '<p class="sub" style="margin-top:12px">The Harness Agent needs one chat-capable deployment (e.g. <code>gpt-4o-mini</code>, <code>gpt-4o</code>, or <code>gpt-5</code>).</p>' +
         '<ol style="margin-top:0;padding-left:20px;color:var(--muted);font-size:13px;line-height:1.7">' +
-          '<li>Open <a href="https://ai.azure.com" target="_blank">https://ai.azure.com</a>, pick project on account <b>' + escapeHtml(state.foundry.name) + '</b>.</li>' +
-          '<li>Go to <b>Models + endpoints → Deploy model → Deploy base model</b>, search for <code>model-router</code>, click <b>Confirm</b>.</li>' +
-          '<li>Choose <b>Customize</b>. Name the deployment <code>mr-balanced</code>, set <b>Routing mode</b> = <b>Balanced</b>, Deployment type = <b>Global Standard</b>, Capacity = <b>1</b>. Click <b>Deploy</b>.</li>' +
-          '<li>Repeat step 3 two more times with names <code>mr-cost</code> (Routing mode = Cost) and <code>mr-quality</code> (Routing mode = Quality).</li>' +
+          '<li>Open <a href="' + foundryLink + '" target="_blank">' + foundryLink + '</a> and pick the project on account <b>' + escapeHtml(state.foundry.name) + '</b>.</li>' +
+          '<li>Go to <b>Models + endpoints → Deploy model → Deploy base model</b>, pick a chat model, click <b>Confirm</b>.</li>' +
+          '<li>Give it any name (defaults are fine), pick <b>Global Standard</b>, click <b>Deploy</b>.</li>' +
           '<li>Come back here and click <b>Refresh</b>.</li>' +
         '</ol>' +
-        '<p style="font-weight:600;margin:12px 0 4px">Via Azure CLI (creates deployments; routing mode still has to be set in Portal after):</p>' +
-        '<pre style="user-select:all">az cognitiveservices account deployment create \\\n  --name ' + escapeHtml(state.foundry.name) + ' --resource-group ' + escapeHtml(state.foundry.resourceGroup) + ' \\\n  --deployment-name mr-balanced \\\n  --model-name model-router --model-version 2025-11-18 --model-format OpenAI \\\n  --sku-name GlobalStandard --sku-capacity 1\n\n# then mr-cost and mr-quality with the same command, changing --deployment-name</pre>' +
       '</details>';
     if (!deps.length) {
       panel.innerHTML =
-        '<h2>Deploy the three router modes</h2>' +
-        '<p class="sub">No <code>model-router</code> deployments in <b>' + escapeHtml(state.foundry.name) + '</b> yet. Deploy them now — one for each routing mode. Each deployment takes ~30–60 s.</p>' +
+        '<h2>Add a chat deployment</h2>' +
+        '<p class="sub">No deployments in <b>' + escapeHtml(state.foundry.name) + '</b> yet. Add one in the Foundry portal, then click Refresh. Step 5 will grow once we decide what else the harness demo should deploy automatically.</p>' +
         accessBlock +
-        '<div style="display:flex;flex-direction:column;gap:8px;margin:14px 0">' +
-          '<label class="prereq-row"><input type="checkbox" id="chkBalanced" checked><div class="prereq-info"><strong>mr-balanced</strong><small>Routing mode = balanced · model-router 2025-11-18 · Global Standard capacity 20 (≈20K TPM)</small></div><span id="statBalanced" class="prereq-manual">pending</span></label>' +
-          '<label class="prereq-row"><input type="checkbox" id="chkCost" checked><div class="prereq-info"><strong>mr-cost</strong><small>Routing mode = cost · model-router 2025-11-18 · Global Standard capacity 20 (≈20K TPM)</small></div><span id="statCost" class="prereq-manual">pending</span></label>' +
-          '<label class="prereq-row"><input type="checkbox" id="chkQuality" checked><div class="prereq-info"><strong>mr-quality</strong><small>Routing mode = quality · model-router 2025-11-18 · Global Standard capacity 20 (≈20K TPM)</small></div><span id="statQuality" class="prereq-manual">pending</span></label>' +
-        '</div>' +
-        '<div id="batchDeployStatus" class="status info" style="display:none"></div>' +
-        '<div class="footer"><button class="secondary" onclick="setStep(4)">Back</button><button class="secondary" onclick="renderDeployment()">Refresh</button><button id="batchDeployBtn">Deploy selected</button></div>' +
-        help;
+        deployHelp +
+        '<div class="footer"><button class="secondary" onclick="setStep(4)">Back</button><button class="secondary" onclick="renderDeployment()">Refresh</button><button id="next" disabled>Continue</button></div>';
       wireGrantAccess();
-      document.getElementById('batchDeployBtn').onclick = async () => {
-        const selected = [
-          { key: 'Balanced', name: 'mr-balanced', mode: 'balanced' },
-          { key: 'Cost', name: 'mr-cost', mode: 'cost' },
-          { key: 'Quality', name: 'mr-quality', mode: 'quality' }
-        ].filter((t) => document.getElementById('chk' + t.key).checked);
-        if (!selected.length) { alert('Tick at least one deployment.'); return; }
-        const btn = document.getElementById('batchDeployBtn');
-        const statusEl = document.getElementById('batchDeployStatus');
-        btn.disabled = true;
-        statusEl.style.display = 'block';
-        statusEl.className = 'status info';
-        let failures = 0;
-        const errors = [];
-        for (let i = 0; i < selected.length; i++) {
-          const t = selected[i];
-          const chip = document.getElementById('stat' + t.key);
-          chip.textContent = 'creating…';
-          chip.style.color = 'var(--accent)';
-          statusEl.innerHTML = '<span class="spinner"></span>Deploying ' + (i + 1) + ' of ' + selected.length + ': <code>' + t.name + '</code> (mode = ' + t.mode + ')…';
-          try {
-            await api('/api/deploy-router', { method: 'POST', body: { account: state.foundry.name, resourceGroup: state.foundry.resourceGroup, deploymentName: t.name, mode: t.mode, capacity: 20, version: '2025-11-18' } });
-            chip.textContent = '✓ created';
-            chip.style.color = 'var(--good)';
-          } catch (e) {
-            chip.textContent = '✗ failed';
-            chip.style.color = 'var(--bad)';
-            chip.title = e.message;
-            errors.push(t.name + ': ' + e.message);
-            failures++;
-          }
-        }
-        if (failures === 0) {
-          statusEl.className = 'status ok';
-          statusEl.innerHTML = '✓ All deployments created. Refreshing the list…';
-          setTimeout(() => renderDeployment(), 1200);
-        } else {
-          statusEl.className = 'status error';
-          statusEl.innerHTML = '<strong>' + failures + ' deployment(s) failed:</strong><pre style="white-space:pre-wrap;margin:8px 0 0;font-size:12px">' + escapeHtml(errors.join('\n\n')) + '</pre>';
-          btn.disabled = false;
-        }
-      };
       return;
     }
-    const findBy = (needle) => deps.findIndex(d => d.name.toLowerCase().includes(needle));
-    const balancedIdx = findBy('balanced') >= 0 ? findBy('balanced') : (routerDeps[0] ? deps.indexOf(routerDeps[0]) : 0);
-    const costIdx = findBy('cost') >= 0 ? findBy('cost') : balancedIdx;
-    const qualityIdx = findBy('quality') >= 0 ? findBy('quality') : balancedIdx;
     const optionsFor = (selectedIdx) => deps.map((d, i) => '<option value="' + escapeHtml(d.name) + '"' + (i === selectedIdx ? ' selected' : '') + '>' + escapeHtml(d.name) + ' — ' + escapeHtml(d.model || 'unknown') + ' · v' + escapeHtml(d.version || 'unknown') + '</option>').join('');
-    // Build a "created router deployments" checklist so users see a green tick for each of the three canonical
-    // mode names right after the batch deploy step, even when we've moved on to the assignment view.
-    const targets = [
-      { label: 'mr-balanced', mode: 'balanced' },
-      { label: 'mr-cost', mode: 'cost' },
-      { label: 'mr-quality', mode: 'quality' }
-    ];
-    const summaryRows = targets.map((t) => {
-      const found = deps.find((d) => d.name.toLowerCase() === t.label.toLowerCase());
-      return found
-        ? '<label class="prereq-row"><span class="prereq-ok" title="Deployment created">&#10004;</span><div class="prereq-info"><strong>' + t.label + '</strong><small>' + escapeHtml(found.model || 'model-router') + ' · v' + escapeHtml(found.version || 'unknown') + ' · mode = ' + t.mode + '</small></div><span class="prereq-manual">created</span></label>'
-        : '<label class="prereq-row"><span class="prereq-missing" title="Not deployed">&#10008;</span><div class="prereq-info"><strong>' + t.label + '</strong><small>Not deployed — use the Deploy step or Foundry Portal to add it (mode = ' + t.mode + ').</small></div><span class="prereq-manual">missing</span></label>';
-    }).join('');
-    const summaryBlock = '<div style="display:flex;flex-direction:column;gap:8px;margin:14px 0">' + summaryRows + '</div>';
     panel.innerHTML =
-      '<h2>Assign deployments to router modes</h2>' +
-      '<p class="sub">Each mode routes to its own deployment. If you only have one, leave all three the same and the app will show a banner explaining why.</p>' +
+      '<h2>Pick the chat deployment for the harness</h2>' +
+      '<p class="sub">This is the deployment the .NET HarnessAgent host will call. You can swap it later by editing <code>FOUNDRY_MODEL</code> in <code>.env</code>.</p>' +
       accessBlock +
-      summaryBlock +
-      help +
-      '<label for="depBalanced">Balanced deployment</label>' +
-      '<select id="depBalanced">' + optionsFor(balancedIdx) + '</select>' +
-      '<label for="depCost">Cost deployment</label>' +
-      '<select id="depCost">' + optionsFor(costIdx) + '</select>' +
-      '<label for="depQuality">Quality deployment</label>' +
-      '<select id="depQuality">' + optionsFor(qualityIdx) + '</select>' +
+      '<label for="depMain">Chat deployment</label>' +
+      '<select id="depMain">' + optionsFor(0) + '</select>' +
+      deployHelp +
       '<div class="footer"><button class="secondary" onclick="setStep(4)">Back</button><button class="secondary" onclick="renderDeployment()">Refresh</button><button id="next">Continue</button></div>';
     wireGrantAccess();
     document.getElementById('next').onclick = () => {
-      state.deploymentBalanced = document.getElementById('depBalanced').value;
-      state.deploymentCost = document.getElementById('depCost').value;
-      state.deploymentQuality = document.getElementById('depQuality').value;
-      state.deployment = state.deploymentBalanced;
-      // apiVersion kept at its default from the initial state (currently '2024-10-21') — hidden from the UI.
+      state.deployment = document.getElementById('depMain').value;
       setStep(6);
     };
   } catch (e) { showError(e.message); }
 }
 
 function buildEnvPreview() {
+  const projectEndpoint = 'https://' + state.foundry.name + '.services.ai.azure.com/api/projects/default-project';
   const lines = [
     'MODEL_PROVIDER=foundry',
     'PORT=3000',
-    'DATABASE_PATH=./data/router-playground.db',
+    'HARNESS_PORT=5099',
+    'DATABASE_PATH=./data/harness-playground.db',
     '',
-    'AZURE_OPENAI_ENDPOINT=' + state.foundry.endpoint.replace(/\/$/, ''),
+    '# --- Foundry (used by the .NET HarnessAgentHost) ---',
+    'FOUNDRY_PROJECT_ENDPOINT=' + projectEndpoint,
+    'FOUNDRY_MODEL=' + (state.deployment || 'gpt-4o-mini'),
+    '',
+    '# --- Foundry resource metadata (for the UI status pill) ---',
     'AZURE_FOUNDRY_RESOURCE_NAME=' + state.foundry.name,
     'AZURE_FOUNDRY_RESOURCE_GROUP=' + state.foundry.resourceGroup,
-    'MODEL_ROUTER_DEPLOYMENT_NAME=' + state.deployment,
-    'AZURE_OPENAI_API_VERSION=' + state.apiVersion
+    'AZURE_OPENAI_ENDPOINT=' + state.foundry.endpoint.replace(/\/$/, '')
   ];
-  if (state.deploymentBalanced) lines.push('MODEL_ROUTER_DEPLOYMENT_BALANCED=' + state.deploymentBalanced);
-  if (state.deploymentCost) lines.push('MODEL_ROUTER_DEPLOYMENT_COST=' + state.deploymentCost);
-  if (state.deploymentQuality) lines.push('MODEL_ROUTER_DEPLOYMENT_QUALITY=' + state.deploymentQuality);
   return lines.join('\n');
 }
 
@@ -729,13 +649,12 @@ async function doLaunch() {
     const payload = {
       provider: 'foundry',
       port: 3000,
+      harnessPort: 5099,
       endpoint: state.foundry.endpoint.replace(/\/$/, ''),
       foundryName: state.foundry.name,
       foundryResourceGroup: state.foundry.resourceGroup,
+      projectName: 'default-project',
       deployment: state.deployment,
-      deploymentBalanced: state.deploymentBalanced,
-      deploymentCost: state.deploymentCost,
-      deploymentQuality: state.deploymentQuality,
       apiVersion: state.apiVersion
     };
     const { url } = await api('/api/save-and-launch', { method: 'POST', body: payload });

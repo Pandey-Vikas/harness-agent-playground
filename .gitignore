@@ -1,7 +1,24 @@
 node_modules/
 .env
+.env.*
+!.env.example
 data/*.db
 data/*.db-*
 eval-toolkit/
 .DS_Store
 Thumbs.db
+
+# .NET build outputs
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+.vs/
+
+# IDE / OS
+.idea/
+*.swp
+*~
+
+# Local wizard artifacts
+agent-files/
