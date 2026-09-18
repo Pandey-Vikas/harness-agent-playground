@@ -120,7 +120,7 @@ public static class IncidentCommanderScenario
             HarnessCapabilities.Compaction,
             HarnessCapabilities.OpenTelemetry,
         ],
-        ToolFactory: () =>
+        ToolFactory: _ =>
         {
             var tools = new List<AITool>();
             tools.AddRange(SreTools.CreateAll());

@@ -125,7 +125,7 @@ public static class LaunchStudioScenario
             HarnessCapabilities.Compaction,
             HarnessCapabilities.OpenTelemetry,
         ],
-        ToolFactory: () =>
+        ToolFactory: _ =>
         {
             var tools = new List<AITool>();
             tools.AddRange(MarketingTools.CreateAll());

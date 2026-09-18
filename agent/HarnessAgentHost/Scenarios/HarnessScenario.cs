@@ -17,4 +17,4 @@ public sealed record HarnessScenario(
     string StarterPrompt,
     string Instructions,
     IReadOnlyList<string> HighlightedCapabilities,
-    Func<IList<AITool>> ToolFactory);
+    Func<IServiceProvider, IList<AITool>> ToolFactory);

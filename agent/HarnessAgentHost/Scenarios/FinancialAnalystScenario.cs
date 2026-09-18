@@ -2,6 +2,7 @@
 
 using HarnessAgentHost.Tools;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace HarnessAgentHost.Scenarios;
 
@@ -13,19 +14,32 @@ public static class FinancialAnalystScenario
         Id: Id,
         Title: "Investment Thesis Builder",
         Domain: "Financial research",
-        ShortDescription: "Turn a ticker into a full investment thesis: bulls, bears, catalysts, risks, valuation.",
+        ShortDescription: "Turn a ticker into a full investment thesis backed by live Yahoo Finance data.",
         LongDescription:
-            "The agent breaks the ask down into a research plan, asks for approval, then executes autonomously — " +
-            "pulling snapshots, financials, analyst ratings, and news across the ticker and its competitors, and " +
-            "saving a memo to file memory.",
+            "The agent breaks the ask into a research plan, asks for approval, then executes autonomously — " +
+            "pulling live snapshots, financials, analyst ratings, and news from Yahoo Finance for the ticker " +
+            "and its peers, and saving a memo to file memory. Supports US listings (NVDA) and international " +
+            "listings via Yahoo suffixes (INFY.NS for NSE, TCS.NS, RELIANCE.NS, AZN.L, etc.).",
         StarterPrompt: "Build me an investment thesis for NVDA with a 12-month horizon.",
         Instructions:
             """
-            ## Investment Thesis Analyst (DEMO SCENARIO)
+            ## Investment Thesis Analyst (LIVE DATA from Yahoo Finance)
 
-            You are a research analyst inside a Microsoft Agent Framework Harness demo. All tool data is
-            FABRICATED for the demo — no real market feed, no real advice. Frame every output as a research
-            walkthrough, not investment advice.
+            You are a research analyst inside a Microsoft Agent Framework Harness demo. All tool data comes
+            LIVE from Yahoo Finance (via the `get_*` tools). Prices and financials are real, but the demo is
+            still a research walkthrough — not investment advice.
+
+            **Ticker format is critical.** Yahoo uses exchange suffixes:
+            - US listings: plain symbol (e.g. `NVDA`, `MSFT`, `AAPL`).
+            - India NSE: `.NS` suffix (`INFY.NS`, `TCS.NS`, `RELIANCE.NS`).
+            - India BSE: `.BO` suffix.
+            - UK LSE: `.L` suffix.
+            - Hong Kong: `.HK` suffix.
+            When the user names a company without a ticker, pick the correct Yahoo symbol for their intended
+            exchange. When the user says just "Infosys" and doesn't specify, default to `INFY.NS` (NSE, INR).
+
+            **Currency awareness.** Every response includes the currency (INR for `.NS`, USD for US, etc.).
+            Cite prices with the correct symbol (₹, $, £) — NEVER show INR as $.
 
             1. **Plan mode** — decompose the ask into a checklist covering:
                • current market snapshot • last-4-quarter financials • analyst rating distribution
@@ -67,10 +81,10 @@ public static class FinancialAnalystScenario
                ```
                # Investment Thesis Memo — {TICKER} (12-month horizon)
 
-               *DEMO DATA — not investment advice.*
+               *Live data from Yahoo Finance. Not investment advice.*
 
                ## Overview
-               (3-4 sentence paragraph.)
+               (3-4 sentence paragraph. Use the correct currency symbol from `get_stock_snapshot`.)
 
                ## The bull case
                (1-2 short paragraphs. No bullets. Cite tool names inline.)
@@ -93,9 +107,14 @@ public static class FinancialAnalystScenario
                ## Bottom line
                (1-2 sentences.)
                ```
+
+               **On the valuation output:** the DCF is a single-stage Gordon-growth calculation using
+               trailing free cash flow — it's a rough sanity check, not a real target price. If the DCF
+               disagrees materially with market price, note the discrepancy in the memo and flag it as
+               a data-limitation rather than a directional signal.
             3. Cite tool results inline ("Per get_financials, Q3 revenue grew 47% YoY…"). Never invent numbers.
-            4. Finish with a concise **Investment Thesis Memo** in Markdown: bulls, bears, catalysts, risks,
-               and a 1-line takeaway. Include a clear "DEMO DATA — not investment advice." disclaimer.
+            4. The **only** disclaimer text in the memo is: *Live data from Yahoo Finance. Not investment advice.*
+               Do NOT write "DEMO DATA" anywhere — the data is real.
 
             Keep answers tight; summarize long tool outputs rather than repeating them verbatim.
             """,
@@ -112,10 +131,10 @@ public static class FinancialAnalystScenario
             HarnessCapabilities.ToolApproval,
             HarnessCapabilities.OpenTelemetry,
         ],
-        ToolFactory: () =>
+        ToolFactory: sp =>
         {
             var tools = new List<AITool>();
-            tools.AddRange(FinanceTools.CreateAll());
+            tools.AddRange(sp.GetRequiredService<FinanceTools>().CreateAll());
             tools.AddRange(DemoTools.CreateShared());
             return tools;
         });

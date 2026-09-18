@@ -2,10 +2,21 @@
 
 using HarnessAgentHost.Runtime;
 using HarnessAgentHost.Scenarios;
+using HarnessAgentHost.Tools;
 using Microsoft.AspNetCore.Http.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<JsonOptions>(o => o.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase);
+
+// Live Yahoo Finance client for the FinancialAnalystScenario. Cookies are enabled so the crumb dance works.
+builder.Services.AddHttpClient<YahooFinanceClient>()
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        UseCookies = true,
+        CookieContainer = new System.Net.CookieContainer(),
+        AutomaticDecompression = System.Net.DecompressionMethods.All
+    });
+builder.Services.AddSingleton<FinanceTools>();
 builder.Services.AddSingleton<HarnessRuntime>();
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
     .WithOrigins("http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3100", "http://127.0.0.1:3100")

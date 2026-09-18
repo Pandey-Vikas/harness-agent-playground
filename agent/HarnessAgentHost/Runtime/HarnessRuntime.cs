@@ -30,11 +30,16 @@ public sealed class HarnessRuntime
     private readonly SemaphoreSlim _runLock = new(1, 1);
     private readonly SemaphoreSlim _sessionLock = new(1, 1);
     private readonly ILogger<HarnessRuntime> _log;
+    private readonly IServiceProvider _services;
 
     private IChatClient? _chatClient;
     private ActiveSession? _current;
 
-    public HarnessRuntime(ILogger<HarnessRuntime> log) { this._log = log; }
+    public HarnessRuntime(ILogger<HarnessRuntime> log, IServiceProvider services)
+    {
+        this._log = log;
+        this._services = services;
+    }
 
     public string ModelName { get; private set; } = string.Empty;
     public string Endpoint { get; private set; } = string.Empty;
@@ -91,7 +96,7 @@ public sealed class HarnessRuntime
                 {
                     Instructions = scenario.Instructions,
                     MaxOutputTokens = MaxOutputTokens,
-                    Tools = scenario.ToolFactory(),
+                    Tools = scenario.ToolFactory(this._services),
                 }
             });
 
