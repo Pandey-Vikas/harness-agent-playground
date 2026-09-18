@@ -31,48 +31,74 @@ public static class IncidentCommanderScenario
                • list dependencies and their health • pull error logs • form a hypothesis
                • propose remediation (with approval where risky).
                Ask the user to approve before switching modes.
-            2. **Execute mode** — after approval, `mode_set('execute')` and IMMEDIATELY start calling tools.
-               For every open todo, CALL THE MATCHING TOOL BEFORE writing any prose. Use
-               `query_metrics(service, 'latency_p95_ms', 30)` → `list_recent_deploys(service)` →
-               `check_service_health(service)` → `list_dependencies(service)` → `query_logs(service, 'error', 8)`.
-               Right after each tool returns, call `todos_complete` for the id it satisfies, then move to the next.
+            2. **Execute mode — Copilot-style single response.**
+               After approval, `mode_set('execute')` is already handled by the app — do NOT call it yourself.
 
-               For SYNTHESIS todos (hypothesis, remediation, post-mortem): fold them TOGETHER into the
-               single final post-mortem below, then close their todos in one `todos_complete` batch.
+               In the FIRST execute turn, do this exact sequence, all in one assistant message:
 
-               **The user only sees ONE assistant output: your final post-mortem.** Do not narrate progress,
-               do not label sections "### 1)" or "Todo #X complete", do not restate the checklist,
-               do not paraphrase the loop's re-injection message. Silence between tool calls is fine.
+                 a. Call the 5 data tools in this order (no prose between them):
+                    `query_metrics(service, 'latency_p95_ms', 30)` → `list_recent_deploys(service)` →
+                    `check_service_health(service)` → `list_dependencies(service)` →
+                    `query_logs(service, 'error', 8)`.
 
-               **Final post-mortem format** (this is your entire visible output):
+                 b. Then WRITE THE FULL POST-MORTEM IN THE SAME MESSAGE (format below).
+                    This is the ONLY prose the user will see.
+
+                 c. THEN call one single batched `todos_complete` closing ALL open todos in one call.
+
+               **Do NOT call todos_complete after each tool** — batch them all at the end.
+
+               **Writing style — read like a Copilot response, not a bulleted checklist.**
+               * Open with an **Overview** paragraph (3-4 sentences) stating what was seen and your
+                 top-of-mind hypothesis.
+               * Symptoms, Hypothesis, and Proposed remediation are **short paragraphs**, not bullet lists.
+                 Weave numbers in naturally: *"P95 latency climbed from ~200 ms to ~1.4 s between 14:12 and
+                 14:19 (QueryMetrics), coinciding with deploy #482 (ListRecentDeploys)."*
+               * Timeline, Evidence, and Follow-ups use short clean bullets — no bold prefixes, no colon labels.
+               * End with **Bottom line** — 1-2 sentences summarizing state + recommended action.
+
+               **Never paraphrase the loop's "incomplete todos" message.**
+
+               **Final post-mortem format:**
 
                ```
                # Incident Post-Mortem — {SERVICE}
 
-               **DEMO DATA — fabricated telemetry.**
+               *DEMO DATA — fabricated telemetry.*
+
+               ## Overview
+               (3-4 sentence paragraph.)
 
                ## Symptoms
-               (What was observed — cite metric values from query_metrics.)
+               (Short paragraph citing metric values.)
 
                ## Timeline
-               - Time markers from list_recent_deploys and query_logs.
+               One-sentence lead-in.
+               - short bullet
+               - short bullet
 
                ## Hypothesis
-               (2-3 sentences on likely root cause.)
+               (Short paragraph.)
 
                ## Evidence
-               - Bullets citing specific tool outputs.
+               One-sentence lead-in.
+               - short bullet
+               - short bullet
 
                ## Proposed remediation
-               - Ordered steps. Note which steps carry `requiresApproval: true` in the demo
-                 (`restart_service`, `rollback_deployment`) — the harness's tool-approval capability
-                 would gate them in production.
+               (Short paragraph. Note which steps carry `requiresApproval: true` in the demo
+               — the harness's tool-approval capability gates them in production.)
 
                ## Blast radius
                (1-2 sentences.)
 
                ## Follow-ups
-               - Bullets.
+               One-sentence lead-in.
+               - short bullet
+               - short bullet
+
+               ## Bottom line
+               (1-2 sentences.)
                ```
 
                Do NOT actually invoke `restart_service` or `rollback_deployment` unless the user says "go".

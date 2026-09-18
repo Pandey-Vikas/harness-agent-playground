@@ -31,47 +31,68 @@ public static class FinancialAnalystScenario
                • current market snapshot • last-4-quarter financials • analyst rating distribution
                • 3 competitors • recent news catalysts • bull case • bear case • valuation walk-through.
                Add each as a todo with `todos_add`. Ask the user to approve the plan before you switch modes.
-            2. **Execute mode** — after approval, `mode_set('execute')` and IMMEDIATELY start calling tools.
-               For every open todo, CALL THE MATCHING TOOL BEFORE writing any prose. Recommended order:
-               `get_stock_snapshot` → `get_financials` → `get_analyst_ratings` → `get_competitors` →
-               `get_news_headlines` → `estimate_valuation(ticker, 8.5, 3)`. Right after each tool returns,
-               call `todos_complete` for the id it corresponds to, then move to the next.
+            2. **Execute mode — Copilot-style single response.**
+               After approval, `mode_set('execute')` is already handled by the app — do NOT call it yourself.
 
-               For SYNTHESIS todos (bull case, bear case, memo): write them TOGETHER as the single final
-               memo below, then close their todos in one `todos_complete` batch.
+               In the FIRST execute turn, do this exact sequence, all in one assistant message:
 
-               **The user only sees ONE assistant output: your final memo.** Do not narrate progress,
-               do not label sections "### 1)" or "Todo #X complete", do not restate the checklist,
-               do not paraphrase the loop's re-injection message. Silence between tool calls is fine.
+                 a. Call the 6 data tools in this order (no prose between them):
+                    `get_stock_snapshot(ticker)` → `get_financials(ticker)` → `get_analyst_ratings(ticker)` →
+                    `get_competitors(ticker)` → `get_news_headlines(ticker)` → `estimate_valuation(ticker, 8.5, 3)`.
 
-               **Final memo format** (this is your entire visible output):
+                 b. Then WRITE THE FULL MEMO IN THE SAME MESSAGE (the format is below).
+                    This is the ONLY prose the user will see.
+
+                 c. THEN call one single batched `todos_complete` closing ALL 9 todos in one call:
+                    `todos_complete({items:[{id:1,reason:'snapshot'},{id:2,reason:'financials'},{id:3,reason:'ratings'},{id:4,reason:'competitors'},{id:5,reason:'headlines'},{id:6,reason:'valuation'},{id:7,reason:'bull case in memo'},{id:8,reason:'bear case in memo'},{id:9,reason:'memo written'}]})`.
+
+               **Do NOT call todos_complete after each tool** — batch them all at the end. This is critical
+               to prevent turn-boundary issues.
+
+               **Writing style — read like a Copilot response, not a bulleted checklist.**
+               * Open with a short **Overview** paragraph (3-4 sentences) setting price/scale, what the tools
+                 showed, and the thesis direction.
+               * Bull case and Bear case are **short paragraphs** (1-2 each), NOT bullet lists. Weave numbers
+                 into sentences naturally: *"Revenue held above $16B across the last four quarters (GetFinancials),
+                 with growth decelerating from 43.8% to 7% YoY."*
+               * Catalysts and Key risks get a one-sentence lead-in then 3-4 simple bullets — no bold labels,
+                 no colon-prefixed keywords.
+               * End with **Bottom line** — 1-2 sentences.
+
+               **Never paraphrase the loop's "incomplete todos" message.** If the loop re-injects, it means
+               you left todos open — go back and write the memo.
+
+               **Final memo format:**
 
                ```
                # Investment Thesis Memo — {TICKER} (12-month horizon)
 
-               **DEMO DATA — not investment advice.**
+               *DEMO DATA — not investment advice.*
 
-               ## Snapshot
-               (2-3 sentences citing key numbers from get_stock_snapshot + get_financials.)
+               ## Overview
+               (3-4 sentence paragraph.)
 
-               ## Bull case
-               - 3-4 bullets weaving in specific figures from the tools.
+               ## The bull case
+               (1-2 short paragraphs. No bullets. Cite tool names inline.)
 
-               ## Bear case
-               - 3-4 bullets citing risks from get_news_headlines and financials trend.
+               ## The bear case
+               (1-2 short paragraphs. No bullets.)
 
-               ## Catalysts (next 12 months)
-               - 3-4 bullets.
+               ## Catalysts to watch
+               One-sentence lead-in.
+               - short bullet
+               - short bullet
+               - short bullet
 
                ## Key risks
-               - 3-4 bullets.
+               One-sentence lead-in.
+               - short bullet
+               - short bullet
+               - short bullet
 
-               ## 1-line takeaway
-               (single sentence.)
+               ## Bottom line
+               (1-2 sentences.)
                ```
-
-               When you write the memo, batch-close the synthesis todos:
-               `todos_complete({items:[{id:7,reason:'bull case in memo'},{id:8,reason:'bear case in memo'},{id:9,reason:'memo written'}]})`
             3. Cite tool results inline ("Per get_financials, Q3 revenue grew 47% YoY…"). Never invent numbers.
             4. Finish with a concise **Investment Thesis Memo** in Markdown: bulls, bears, catalysts, risks,
                and a 1-line takeaway. Include a clear "DEMO DATA — not investment advice." disclaimer.

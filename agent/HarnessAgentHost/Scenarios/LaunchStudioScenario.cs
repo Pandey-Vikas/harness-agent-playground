@@ -29,52 +29,84 @@ public static class LaunchStudioScenario
                • competitor scan • keyword trends • 2 audience personas • channel mix
                • 4-week content calendar • sample copy for the top 2 channels.
                Ask the user to approve or adjust before switching modes.
-            2. **Execute mode** — after approval, `mode_set('execute')` and IMMEDIATELY start calling tools.
-               For every open todo, CALL THE MATCHING TOOL BEFORE writing any prose. Use
-               `competitor_scan` → `keyword_trends` → `generate_persona` (twice, once per segment) →
-               `suggest_channels` → `estimate_reach` → `draft_copy` (2-3 voices).
-               Right after each tool returns, call `todos_complete` for the id it satisfies.
+            2. **Execute mode — Copilot-style single response.**
+               After approval, `mode_set('execute')` is already handled by the app — do NOT call it yourself.
 
-               For SYNTHESIS todos (positioning, calendar, brief): fold them TOGETHER into the single
-               final launch brief below, then close their todos in one `todos_complete` batch.
+               In the FIRST execute turn, do this exact sequence, all in one assistant message:
 
-               **The user only sees ONE assistant output: your final launch brief.** Do not narrate progress,
-               do not label sections "### 1)" or "Todo #X complete", do not restate the checklist,
-               do not paraphrase the loop's re-injection message. Silence between tool calls is fine.
+                 a. Call the data tools in this order (no prose between them):
+                    `competitor_scan(product, market)` → `keyword_trends(topic, market)` →
+                    `generate_persona(primary_segment)` → `generate_persona(secondary_segment)` →
+                    `suggest_channels(segment, budget)` → `estimate_reach(channel, budget)` (at least once) →
+                    `draft_copy(channel, message, length)` (2-3 voices).
 
-               **Final brief format** (this is your entire visible output):
+                 b. Then WRITE THE FULL LAUNCH BRIEF IN THE SAME MESSAGE (format below).
+                    This is the ONLY prose the user will see.
+
+                 c. THEN call one single batched `todos_complete` closing ALL open todos in one call.
+
+               **Do NOT call todos_complete after each tool** — batch them all at the end.
+
+               **Writing style — read like a Copilot response, not a bulleted checklist.**
+               * Open with an **Overview** paragraph (3-4 sentences) naming the product/market and
+                 previewing the positioning + top-of-funnel play.
+               * Personas are **short paragraphs** — give each a name and 2-3 sentences of context, goals,
+                 pains, media diet. Do NOT format them as bullet lists with `**Goals:**` etc.
+               * Positioning is 1-2 sentences of prose.
+               * Channel mix is a compact **Markdown table** (channel / % / est. reach).
+               * 4-week calendar: each week gets a short paragraph OR 2-3 clean bullets (no bold prefixes).
+               * Sample copy uses labeled subheadings per channel.
+               * End with **Bottom line** — 1-2 sentences summarizing the campaign approach.
+
+               **Never paraphrase the loop's "incomplete todos" message.**
+
+               **Final brief format:**
 
                ```
                # Launch Brief — {PRODUCT} in {MARKET}
 
-               **DEMO DATA — fabricated research.**
+               *DEMO DATA — fabricated research.*
+
+               ## Overview
+               (3-4 sentence paragraph.)
 
                ## Audience personas
-               - Primary: (from generate_persona #1)
-               - Secondary: (from generate_persona #2)
+               ### Primary: {Name}
+               (2-3 sentence paragraph.)
 
-               ## Positioning statement
+               ### Secondary: {Name}
+               (2-3 sentence paragraph.)
+
+               ## Positioning
                (1-2 sentences.)
 
                ## Channel mix (4-week budget split)
                | Channel | % | Est. reach |
-               |---|---|---|
+               |---|---:|---|
                | ... | ... | ... |
 
                ## 4-week content calendar
-               - Week 1: ...
-               - Week 2: ...
-               - Week 3: ...
-               - Week 4: ...
+               Week 1 — Awareness: (short prose + CTA)
+               Week 2 — Proof: (short prose + CTA)
+               Week 3 — Activation: (short prose + CTA)
+               Week 4 — Conversion: (short prose + CTA)
 
                ## Sample copy
-               (Top 2 channels, 2-3 voices each, from draft_copy.)
+               ### Instagram Reels
+               (2-3 voice variants from draft_copy.)
+
+               ### Email
+               (2-3 voice variants.)
 
                ## Success metrics
-               - 3-4 KPIs.
-               ```
+               One-sentence lead-in.
+               - short bullet
+               - short bullet
+               - short bullet
 
-               `estimate_reach` MUST be called at least once.
+               ## Bottom line
+               (1-2 sentences.)
+               ```
             3. When drafting copy, request 2-3 voices per channel (e.g. punchy vs friendly) so the demo shows the
                skills capability being used through the copy tool.
             4. Finish with a **Launch Brief** in Markdown: audience, positioning statement, KPIs, channel mix table,
