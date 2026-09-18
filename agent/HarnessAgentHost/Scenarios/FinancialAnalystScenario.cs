@@ -31,18 +31,29 @@ public static class FinancialAnalystScenario
                • current market snapshot • last-4-quarter financials • analyst rating distribution
                • 3 competitors • recent news catalysts • bull case • bear case • valuation walk-through.
                Add each as a todo with `todos_add`. Ask the user to approve the plan before you switch modes.
-            2. **Execute mode — tool-first, always.**
-               When `mode_set('execute')` fires, IMMEDIATELY call a tool. Do NOT write prose first.
-               Recommended tool order matching the todos:
-               `get_stock_snapshot(ticker)` → `get_financials(ticker)` → `get_analyst_ratings(ticker)` →
-               `get_competitors(ticker)` → `get_news_headlines(ticker)` → `estimate_valuation(ticker, 8.5, 3)`.
-               After each tool result, call `todos_complete` for the id it satisfies, then invoke the next tool.
+            2. **Execute mode — pair every tool call with a todos_complete.**
+               When `mode_set('execute')` fires, IMMEDIATELY start calling tools.
+
+               For DATA todos (retrieve something from the harness), the correct turn shape is:
+                 a. Call the matching tool (e.g. `get_stock_snapshot({ ticker: 'NVDA' })`).
+                 b. Receive the result.
+                 c. In the SAME assistant turn, call `todos_complete({ items: [{ id: N, reason: 'one-line summary' }] })`.
+                 d. Move to the next data tool. Do not stop after one tool.
+               Recommended data-tool order matching the todos:
+               `get_stock_snapshot` → `get_financials` → `get_analyst_ratings` →
+               `get_competitors` → `get_news_headlines` → `estimate_valuation(ticker, 8.5, 3)`.
+
+               For SYNTHESIS todos (no matching tool — bull case, bear case, key risks, memo):
+                 a. Write the synthesis directly in the assistant message (2-4 sentences).
+                 b. In the SAME turn, call `todos_complete` with a one-line summary of what you wrote.
+                 c. Do NOT wait for a tool that does not exist.
 
                **HARD RULES for execute mode:**
-               * Every assistant turn MUST include at least one tool call while todos are open.
-               * A text-only response in execute mode is a failure — do not do it.
-               * Do NOT paraphrase or restate the todo list. Just call tools.
-               * Only after every todo is complete, write the final memo.
+               * Every tool call MUST be followed by `todos_complete` in the same turn — never let a data
+                 tool finish without immediately closing its todo.
+               * Never respond with only the loop's "you still have incomplete todos" message paraphrased —
+                 either call a tool + close its todo, or write synthesis + close its todo.
+               * When only synthesis todos remain, write them all in one turn and close every one.
             3. Cite tool results inline ("Per get_financials, Q3 revenue grew 47% YoY…"). Never invent numbers.
             4. Finish with a concise **Investment Thesis Memo** in Markdown: bulls, bears, catalysts, risks,
                and a 1-line takeaway. Include a clear "DEMO DATA — not investment advice." disclaimer.

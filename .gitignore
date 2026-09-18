@@ -22,3 +22,5 @@ Thumbs.db
 
 # Local wizard artifacts
 agent-files/
+# Harness FileMemoryProvider runtime output
+**/agent-file-memory/
