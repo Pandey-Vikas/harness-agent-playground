@@ -35,6 +35,55 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+/**
+ * Detects when an agent bubble is just paraphrasing the LoopEvaluator's re-injection message
+ * ("You still have incomplete todo items. Continue working…"). Those bubbles are useless noise
+ * — the tools still fire and the todos still flip, but partners shouldn't see them.
+ */
+const LOOP_ECHO_MARKERS = [
+  'you still have incomplete todo item',
+  'continue working until every item is complete',
+  'marking each item as complete when finished',
+  "i'm sorry, but i cannot assist with"
+];
+function looksLikeLoopEcho(text) {
+  if (!text || text.length < 30) return false;
+  const head = text.slice(0, 200).toLowerCase();
+  return LOOP_ECHO_MARKERS.some((m) => head.includes(m));
+}
+/**
+ * Compact one-line summary of a tool-call args object for the live thinker.
+ * For simple scalars we emit "key=value"; for arrays like {items:[{id,reason}]} we emit "ids=[1,2,3]".
+ * Full JSON always goes into the Tool Activity panel unchanged.
+ */
+function summarizeArgs(args) {
+  if (args == null) return '';
+  let obj = args;
+  if (typeof obj === 'string') { try { obj = JSON.parse(obj); } catch { return obj.length > 80 ? obj.slice(0, 77) + '…' : obj; } }
+  if (typeof obj !== 'object') return String(obj);
+  const parts = [];
+  for (const [k, v] of Object.entries(obj)) {
+    if (v == null) continue;
+    if (Array.isArray(v)) {
+      if (v.length === 0) { parts.push(`${k}=[]`); continue; }
+      if (v.every((it) => it && typeof it === 'object' && ('id' in it))) {
+        parts.push(`ids=[${v.map((it) => it.id).join(', ')}]`);
+      } else if (v.every((it) => typeof it !== 'object')) {
+        parts.push(`${k}=[${v.slice(0, 4).join(', ')}${v.length > 4 ? ', …' : ''}]`);
+      } else {
+        parts.push(`${k}=[${v.length} items]`);
+      }
+    } else if (typeof v === 'object') {
+      parts.push(`${k}={…}`);
+    } else {
+      const s = String(v);
+      parts.push(`${k}=${s.length > 40 ? s.slice(0, 37) + '…' : s}`);
+    }
+  }
+  const joined = parts.join(', ');
+  return joined.length > 140 ? joined.slice(0, 137) + '…' : joined;
+}
+
 let _lastThinker = '';
 function showThinker(html) {
   const el = $('thinker');
@@ -317,15 +366,26 @@ function handleEvent(evt, data) {
     case 'text': {
       if (!state.currentAssistantEl) state.currentAssistantEl = appendChat('agent', '');
       const el = state.currentAssistantEl.querySelector('.msg-body');
-      if (el) { el.textContent += data.text; $('chatLog').scrollTop = $('chatLog').scrollHeight; }
-      showThinker('Writing response…');
+      if (el) {
+        el.textContent += data.text;
+        // Suppress loop-echo bubbles from the chat log — tools/todos still update in the side panels.
+        if (looksLikeLoopEcho(el.textContent)) {
+          state.currentAssistantEl.hidden = true;
+          showThinker('Working through remaining todos…');
+        } else {
+          $('chatLog').scrollTop = $('chatLog').scrollHeight;
+          showThinker('Writing response…');
+        }
+      }
       break;
     }
     case 'tool_call': {
       const args = typeof data.arguments === 'string' ? data.arguments : JSON.stringify(data.arguments, null, 2);
       const li = pushToolLog({ name: data.name, arguments: args, status: 'pending', capability: data.capability });
       state.toolsById.set(data.id, { li, name: data.name });
-      showThinker(`Calling <code>${escapeHtml(data.name)}</code>…`);
+      // Compact one-line summary of the args for the thinker (full JSON goes in the tool panel).
+      const argsSummary = summarizeArgs(data.arguments);
+      showThinker(`Calling <code>${escapeHtml(data.name)}</code>${argsSummary ? ` with <code>${escapeHtml(argsSummary)}</code>` : ''}…`);
       // Optimistically flip nodes to complete as the agent calls todos_complete — the flow chart animates live.
       if (data.name === 'todos_complete' && state.status?.todos) {
         try {

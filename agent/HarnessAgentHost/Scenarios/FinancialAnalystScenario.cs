@@ -31,29 +31,47 @@ public static class FinancialAnalystScenario
                • current market snapshot • last-4-quarter financials • analyst rating distribution
                • 3 competitors • recent news catalysts • bull case • bear case • valuation walk-through.
                Add each as a todo with `todos_add`. Ask the user to approve the plan before you switch modes.
-            2. **Execute mode — pair every tool call with a todos_complete.**
-               When `mode_set('execute')` fires, IMMEDIATELY start calling tools.
+            2. **Execute mode** — after approval, `mode_set('execute')` and IMMEDIATELY start calling tools.
+               For every open todo, CALL THE MATCHING TOOL BEFORE writing any prose. Recommended order:
+               `get_stock_snapshot` → `get_financials` → `get_analyst_ratings` → `get_competitors` →
+               `get_news_headlines` → `estimate_valuation(ticker, 8.5, 3)`. Right after each tool returns,
+               call `todos_complete` for the id it corresponds to, then move to the next.
 
-               For DATA todos (retrieve something from the harness), the correct turn shape is:
-                 a. Call the matching tool (e.g. `get_stock_snapshot({ ticker: 'NVDA' })`).
-                 b. Receive the result.
-                 c. In the SAME assistant turn, call `todos_complete({ items: [{ id: N, reason: 'one-line summary' }] })`.
-                 d. Move to the next data tool. Do not stop after one tool.
-               Recommended data-tool order matching the todos:
-               `get_stock_snapshot` → `get_financials` → `get_analyst_ratings` →
-               `get_competitors` → `get_news_headlines` → `estimate_valuation(ticker, 8.5, 3)`.
+               For SYNTHESIS todos (bull case, bear case, memo): write them TOGETHER as the single final
+               memo below, then close their todos in one `todos_complete` batch.
 
-               For SYNTHESIS todos (no matching tool — bull case, bear case, key risks, memo):
-                 a. Write the synthesis directly in the assistant message (2-4 sentences).
-                 b. In the SAME turn, call `todos_complete` with a one-line summary of what you wrote.
-                 c. Do NOT wait for a tool that does not exist.
+               **The user only sees ONE assistant output: your final memo.** Do not narrate progress,
+               do not label sections "### 1)" or "Todo #X complete", do not restate the checklist,
+               do not paraphrase the loop's re-injection message. Silence between tool calls is fine.
 
-               **HARD RULES for execute mode:**
-               * Every tool call MUST be followed by `todos_complete` in the same turn — never let a data
-                 tool finish without immediately closing its todo.
-               * Never respond with only the loop's "you still have incomplete todos" message paraphrased —
-                 either call a tool + close its todo, or write synthesis + close its todo.
-               * When only synthesis todos remain, write them all in one turn and close every one.
+               **Final memo format** (this is your entire visible output):
+
+               ```
+               # Investment Thesis Memo — {TICKER} (12-month horizon)
+
+               **DEMO DATA — not investment advice.**
+
+               ## Snapshot
+               (2-3 sentences citing key numbers from get_stock_snapshot + get_financials.)
+
+               ## Bull case
+               - 3-4 bullets weaving in specific figures from the tools.
+
+               ## Bear case
+               - 3-4 bullets citing risks from get_news_headlines and financials trend.
+
+               ## Catalysts (next 12 months)
+               - 3-4 bullets.
+
+               ## Key risks
+               - 3-4 bullets.
+
+               ## 1-line takeaway
+               (single sentence.)
+               ```
+
+               When you write the memo, batch-close the synthesis todos:
+               `todos_complete({items:[{id:7,reason:'bull case in memo'},{id:8,reason:'bear case in memo'},{id:9,reason:'memo written'}]})`
             3. Cite tool results inline ("Per get_financials, Q3 revenue grew 47% YoY…"). Never invent numbers.
             4. Finish with a concise **Investment Thesis Memo** in Markdown: bulls, bears, catalysts, risks,
                and a 1-line takeaway. Include a clear "DEMO DATA — not investment advice." disclaimer.

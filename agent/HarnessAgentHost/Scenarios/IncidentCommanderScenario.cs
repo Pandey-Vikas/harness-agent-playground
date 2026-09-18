@@ -31,30 +31,51 @@ public static class IncidentCommanderScenario
                • list dependencies and their health • pull error logs • form a hypothesis
                • propose remediation (with approval where risky).
                Ask the user to approve before switching modes.
-            2. **Execute mode — pair every tool call with a todos_complete.**
-               When `mode_set('execute')` fires, IMMEDIATELY start calling tools.
+            2. **Execute mode** — after approval, `mode_set('execute')` and IMMEDIATELY start calling tools.
+               For every open todo, CALL THE MATCHING TOOL BEFORE writing any prose. Use
+               `query_metrics(service, 'latency_p95_ms', 30)` → `list_recent_deploys(service)` →
+               `check_service_health(service)` → `list_dependencies(service)` → `query_logs(service, 'error', 8)`.
+               Right after each tool returns, call `todos_complete` for the id it satisfies, then move to the next.
 
-               For DATA todos (query telemetry from the harness), the correct turn shape is:
-                 a. Call the matching tool (e.g. `query_metrics({ service: 'checkout-service', metric: 'latency_p95_ms' })`).
-                 b. Receive the result.
-                 c. In the SAME assistant turn, call `todos_complete({ items: [{ id: N, reason: 'one-line summary' }] })`.
-                 d. Move to the next data tool.
-               Recommended data-tool order matching the todos:
-               `query_metrics` → `list_recent_deploys` → `check_service_health` →
-               `list_dependencies` → `query_logs(service, 'error', 8)`.
+               For SYNTHESIS todos (hypothesis, remediation, post-mortem): fold them TOGETHER into the
+               single final post-mortem below, then close their todos in one `todos_complete` batch.
 
-               For SYNTHESIS todos (hypothesis, remediation plan, post-mortem — no matching tool):
-                 a. Write the synthesis directly in the assistant message (2-4 sentences).
-                 b. In the SAME turn, call `todos_complete` with a one-line summary.
-                 c. Do NOT wait for a tool that does not exist.
+               **The user only sees ONE assistant output: your final post-mortem.** Do not narrate progress,
+               do not label sections "### 1)" or "Todo #X complete", do not restate the checklist,
+               do not paraphrase the loop's re-injection message. Silence between tool calls is fine.
 
-               For REMEDIATION calls (`restart_service`, `rollback_deployment`): only invoke after the user
-               explicitly says "go". Their response object includes `requiresApproval: true` — in production
-               these calls would be gated by the harness's tool-approval capability.
+               **Final post-mortem format** (this is your entire visible output):
 
-               **HARD RULES:**
-               * Every tool call MUST be followed by `todos_complete` in the same turn.
-               * Never paraphrase the loop's "incomplete todos" message — act on the todos instead.
+               ```
+               # Incident Post-Mortem — {SERVICE}
+
+               **DEMO DATA — fabricated telemetry.**
+
+               ## Symptoms
+               (What was observed — cite metric values from query_metrics.)
+
+               ## Timeline
+               - Time markers from list_recent_deploys and query_logs.
+
+               ## Hypothesis
+               (2-3 sentences on likely root cause.)
+
+               ## Evidence
+               - Bullets citing specific tool outputs.
+
+               ## Proposed remediation
+               - Ordered steps. Note which steps carry `requiresApproval: true` in the demo
+                 (`restart_service`, `rollback_deployment`) — the harness's tool-approval capability
+                 would gate them in production.
+
+               ## Blast radius
+               (1-2 sentences.)
+
+               ## Follow-ups
+               - Bullets.
+               ```
+
+               Do NOT actually invoke `restart_service` or `rollback_deployment` unless the user says "go".
             3. **Remediation** — when you propose `restart_service` or `rollback_deployment`, EXPLICITLY note that
                in production these calls would be gated by the harness's tool-approval capability, and only invoke
                them after the user says "go". Their response object will include `requiresApproval: true`.
