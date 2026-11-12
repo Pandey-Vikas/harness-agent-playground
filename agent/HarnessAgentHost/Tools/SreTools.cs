@@ -20,8 +20,8 @@ public static class SreTools
         AIFunctionFactory.Create(ListRecentDeploys),
         AIFunctionFactory.Create(CheckServiceHealth),
         AIFunctionFactory.Create(ListDependencies),
-        AIFunctionFactory.Create(RestartService),
-        AIFunctionFactory.Create(RollbackDeployment),
+        new ApprovalRequiredAIFunction(AIFunctionFactory.Create(RestartService)),
+        new ApprovalRequiredAIFunction(AIFunctionFactory.Create(RollbackDeployment)),
     ];
 
     [Description("Returns fabricated time-series values for a service metric over a window (e.g. p95 latency ms, error rate %).")]
@@ -147,7 +147,7 @@ public static class SreTools
         return JsonSerializer.Serialize(new { service, dependencies = deps, note = "DEMO DATA." });
     }
 
-    [Description("Restart the specified service. WOULD REQUIRE APPROVAL IN PRODUCTION — the harness's tool-approval capability guards mutations like this.")]
+    [Description("Restart the specified service. Requires human approval before it executes.")]
     public static string RestartService(
         [Description("Service name.")] string service)
     {
@@ -155,13 +155,12 @@ public static class SreTools
         {
             action = "restart_service",
             service,
-            status = "acknowledged",
-            requiresApproval = true,
-            note = "DEMO ONLY — no real restart. In production, harness UseToolApproval() would gate this call."
+            status = "executed",
+            note = "Simulated action: nothing real was restarted."
         });
     }
 
-    [Description("Roll back a service to a previous deploy id. WOULD REQUIRE APPROVAL IN PRODUCTION.")]
+    [Description("Roll back a service to a previous deploy id. Requires human approval before it executes.")]
     public static string RollbackDeployment(
         [Description("Service name.")] string service,
         [Description("Deploy id to roll back to, e.g. 'deploy-4821'.")] string toDeployId)
@@ -171,9 +170,8 @@ public static class SreTools
             action = "rollback_deployment",
             service,
             toDeployId,
-            status = "acknowledged",
-            requiresApproval = true,
-            note = "DEMO ONLY — no real rollback. In production, harness UseToolApproval() would gate this call."
+            status = "executed",
+            note = "Simulated action: nothing real was rolled back."
         });
     }
 

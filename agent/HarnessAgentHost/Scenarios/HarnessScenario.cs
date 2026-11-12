@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace HarnessAgentHost.Scenarios;
@@ -17,4 +18,11 @@ public sealed record HarnessScenario(
     string StarterPrompt,
     string Instructions,
     IReadOnlyList<string> HighlightedCapabilities,
-    Func<IServiceProvider, IList<AITool>> ToolFactory);
+    Func<IServiceProvider, IList<AITool>> ToolFactory)
+{
+    /// <summary>Code-defined Agent Skills exposed through the harness skills provider.</summary>
+    public Func<IReadOnlyList<AgentSkill>>? SkillsFactory { get; init; }
+
+    /// <summary>Named child agents the parent can delegate to through the background-agents provider.</summary>
+    public Func<IChatClient, IServiceProvider, IReadOnlyList<AIAgent>>? BackgroundAgentsFactory { get; init; }
+}

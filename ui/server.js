@@ -72,6 +72,20 @@ async function proxyJson(request, response, path, { method = 'GET' } = {}) {
   }
 }
 
+// Stream a file download from the .NET host (artifacts).
+async function proxyRaw(response, path) {
+  try {
+    const upstream = await fetch(`${harnessBase}${path}`);
+    const headers = { 'content-type': upstream.headers.get('content-type') || 'application/octet-stream' };
+    const disposition = upstream.headers.get('content-disposition');
+    if (disposition) headers['content-disposition'] = disposition;
+    response.writeHead(upstream.status, headers);
+    response.end(Buffer.from(await upstream.arrayBuffer()));
+  } catch (error) {
+    sendJson(response, 502, { error: error.message || String(error) });
+  }
+}
+
 // Stream Server-Sent Events from the .NET host through to the browser.
 async function proxySse(request, response, path) {
   let body;
@@ -154,6 +168,10 @@ const server = createServer(async (request, response) => {
   if (url.pathname === '/api/agent/reset' && request.method === 'POST') return proxyJson(request, response, '/api/session/reset', { method: 'POST' });
   if (url.pathname === '/api/agent/mode' && request.method === 'POST') return proxyJson(request, response, '/api/mode', { method: 'POST' });
   if (url.pathname === '/api/agent/run' && request.method === 'POST') return proxySse(request, response, '/api/run');
+  if (url.pathname === '/api/agent/approval' && request.method === 'POST') return proxySse(request, response, '/api/approval');
+  if (url.pathname === '/api/agent/trace' && request.method === 'GET') return proxyJson(request, response, '/api/session/trace');
+  if (url.pathname === '/api/agent/artifacts' && request.method === 'GET') return proxyJson(request, response, '/api/artifacts');
+  if (url.pathname === '/api/agent/artifact' && request.method === 'GET') return proxyRaw(response, `/api/artifacts/file${url.search}`);
 
   serveStatic(response, url.pathname);
 });

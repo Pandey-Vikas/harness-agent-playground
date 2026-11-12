@@ -1,7 +1,6 @@
 # agent/ — .NET Harness Agent backend
 
-Everything the demo needs to run a `HarnessAgent` from the Microsoft Agent Framework lives here.
-The Node.js UI in [../ui/](../ui) is a thin proxy in front of this host.
+Everything the demo needs to run a `HarnessAgent` from the Microsoft Agent Framework. The Node.js UI in [../ui/](../ui) is a thin proxy in front of this host. See the [root README](../README.md) for scenarios and the capability matrix.
 
 ## Layout
 
@@ -9,58 +8,48 @@ The Node.js UI in [../ui/](../ui) is a thin proxy in front of this host.
 agent/
 ├── HarnessAgent.sln
 └── HarnessAgentHost/
-    ├── HarnessAgentHost.csproj    # net10.0, minimal APIs, Harness + Foundry NuGets
-    ├── Program.cs                 # HTTP + SSE endpoints
-    ├── appsettings.json
+    ├── Program.cs                      # HTTP + SSE endpoints
     ├── Runtime/
-    │   └── HarnessRuntime.cs      # HarnessAgent + AgentSession lifecycle
-    └── Tools/
-        └── DemoTools.cs           # get_time, add_numbers, weather_lookup
+    │   ├── HarnessRuntime.cs           # builds the HarnessAgent, streams runs, tool approvals
+    │   ├── ActiveSession.cs            # per-session counters, pending approvals
+    │   └── TraceCollector.cs           # in-process OpenTelemetry sink for the trace panel
+    ├── Scenarios/                      # three scenarios + capability catalog + skills
+    └── Tools/                          # FinanceTools (live Yahoo), SreTools, MarketingTools, shared tools
 ```
-
-## What the runtime does
-
-- Builds one `HarnessAgent` from `AIProjectClient` → responses client → `AsHarnessAgent(...)`.
-- Enables **planning + todos** via `HarnessAgentOptions.AgentModeProviderOptions` and a
-  `TodoCompletionLoopEvaluator` scoped to `execute` mode (per
-  [Planning and Todos with Harness Agent](https://learn.microsoft.com/en-us/agent-framework/agents/planning-and-todos#use-planning-and-todos-with-harness-agent)).
-- Keeps a single `AgentSession` in memory; `POST /api/session/reset` swaps it for a fresh one.
-- Streams every run as Server-Sent Events (`text`, `tool_call`, `tool_result`, `usage`, `done`, `error`).
 
 ## HTTP surface
 
-| Method | Path                    | Purpose                                        |
-| ------ | ----------------------- | ---------------------------------------------- |
-| GET    | `/health`               | Basic liveness + model/endpoint echo           |
-| GET    | `/api/session/status`   | Current mode + todos snapshot                  |
-| POST   | `/api/session/reset`    | Rotate the session, return fresh status        |
-| POST   | `/api/mode`             | `{ "mode": "plan" | "execute" }`               |
-| POST   | `/api/run`              | `{ "prompt": "..." }` → SSE stream             |
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/health` | Liveness plus model and endpoint |
+| GET | `/api/scenarios` | Scenario cards and the capability catalog |
+| POST | `/api/session/start` | `{ "scenarioId": "..." }` builds that scenario's agent |
+| GET | `/api/session/status` | Mode, todos, exercised capabilities, pending approvals |
+| GET | `/api/session/summary` | Execution summary with the capability breakdown |
+| GET | `/api/session/trace` | OpenTelemetry spans for the current session |
+| POST | `/api/session/reset` | Rotate the session |
+| POST | `/api/mode` | `{ "mode": "plan" \| "execute" }` |
+| POST | `/api/run` | `{ "prompt": "..." }` returns an SSE stream |
+| POST | `/api/approval` | `{ "decisions": [{ "id", "approved", "reason" }] }` resumes after an approval request (SSE) |
+| GET | `/api/artifacts` | Files the agent saved for the active scenario |
+| GET | `/api/artifacts/file?path=` | Download one file (path-traversal safe) |
 
 ## Environment variables
 
-| Name                        | Required | Default        | Notes                                                                   |
-| --------------------------- | -------- | -------------- | ----------------------------------------------------------------------- |
-| `FOUNDRY_PROJECT_ENDPOINT`  | yes      | —              | `https://<foundry>.services.ai.azure.com/api/projects/<project>`         |
-| `FOUNDRY_MODEL`             | no       | `gpt-4o-mini`  | Deployment name on that project                                          |
-| `HARNESS_PORT`              | no       | `5099`         | Local port the host binds to (loopback only)                             |
+| Name | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `FOUNDRY_PROJECT_ENDPOINT` | yes | none | `https://<foundry>.services.ai.azure.com/api/projects/<project>` |
+| `FOUNDRY_MODEL` | no | `gpt-4o-mini` | Deployment name on that project |
+| `HARNESS_PORT` | no | `5099` | Loopback port |
 
-Auth is Microsoft Entra ID (`DefaultAzureCredential`) — no keys. Sign in with
-`az login` before starting the host.
+Auth is Microsoft Entra ID (`DefaultAzureCredential`). Sign in with `az login` first.
 
 ## Run standalone
 
 ```powershell
-cd agent
 $env:FOUNDRY_PROJECT_ENDPOINT = "https://your-foundry.services.ai.azure.com/api/projects/default-project"
-$env:FOUNDRY_MODEL = "gpt-4o-mini"
-dotnet run --project HarnessAgentHost
+$env:FOUNDRY_MODEL = "gpt-5.2"
+dotnet run --project agent/HarnessAgentHost -c Release
 ```
 
-Then hit `http://127.0.0.1:5099/health`.
-
-## References
-
-- [Agent Harness | Microsoft Learn](https://learn.microsoft.com/en-us/agent-framework/concepts/harness?pivots=programming-language-csharp)
-- [Planning and Todos | Microsoft Learn](https://learn.microsoft.com/en-us/agent-framework/agents/planning-and-todos?pivots=programming-language-csharp)
-- [.NET Harness samples on GitHub](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/02-agents/Harness)
+Packages restore through the CFS proxy configured in the root `NuGet.config`.

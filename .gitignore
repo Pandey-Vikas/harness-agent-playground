@@ -24,3 +24,13 @@ Thumbs.db
 agent-files/
 # Harness FileMemoryProvider runtime output
 **/agent-file-memory/
+
+# Files the demo agents save, local logs and test output
+data/artifacts/
+agent/HarnessAgentHost/data/
+/host.out
+/host.err
+/ui.out
+/ui.err
+/e2e-*.txt
+/shot-*.png

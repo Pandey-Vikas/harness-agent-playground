@@ -20,7 +20,7 @@ public sealed class HarnessRuntime
 {
     private const string TracingSourceName = "Harness.Playground";
     private const int MaxContextWindowTokens = 128_000;
-    private const int MaxOutputTokens = 16_384;
+    private const int MaxOutputTokens = 8_000; // Azure reserves max output tokens against the TPM budget on every request.
 
     private static readonly JsonSerializerOptions s_jsonOpts = new(JsonSerializerDefaults.Web)
     {
@@ -34,6 +34,7 @@ public sealed class HarnessRuntime
 
     private IChatClient? _chatClient;
     private ActiveSession? _current;
+    private TraceCollector? _trace;
 
     public HarnessRuntime(ILogger<HarnessRuntime> log, IServiceProvider services)
     {
@@ -67,6 +68,7 @@ public sealed class HarnessRuntime
             .AsIChatClient(deploymentName);
 
         this._log.LogInformation("HarnessRuntime ready. Model={Model}, Endpoint={Endpoint}", deploymentName, endpoint);
+        this._trace = new TraceCollector(TracingSourceName);
         return Task.CompletedTask;
     }
 
@@ -79,7 +81,20 @@ public sealed class HarnessRuntime
         await this._sessionLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var agent = chatClient.AsHarnessAgent(new HarnessAgentOptions
+            var artifactsDir = Path.Combine(FindRepoRoot(), "data", "artifacts", scenario.Id);
+            Directory.CreateDirectory(artifactsDir);
+
+            var skills = scenario.SkillsFactory?.Invoke();
+            var background = scenario.BackgroundAgentsFactory?.Invoke(chatClient, this._services);
+            var hasBackground = background is { Count: > 0 };
+
+            var evaluators = new List<LoopEvaluator>
+            {
+                new TodoCompletionLoopEvaluator(new TodoCompletionLoopEvaluatorOptions { Modes = ["execute"] })
+            };
+            if (hasBackground) evaluators.Add(new BackgroundTaskCompletionLoopEvaluator());
+
+            var options = new HarnessAgentOptions
             {
                 Name = scenario.Title,
                 Description = scenario.ShortDescription,
@@ -87,26 +102,49 @@ public sealed class HarnessRuntime
                 MaxContextWindowTokens = MaxContextWindowTokens,
                 MaxOutputTokens = MaxOutputTokens,
                 AgentModeProviderOptions = new AgentModeProviderOptions { DefaultMode = "plan" },
-                LoopEvaluators =
-                [
-                    new TodoCompletionLoopEvaluator(new TodoCompletionLoopEvaluatorOptions { Modes = ["execute"] })
-                ],
-                LoopAgentOptions = new LoopAgentOptions { MaxIterations = 4 },
+                LoopEvaluators = evaluators,
+                LoopAgentOptions = new LoopAgentOptions { MaxIterations = hasBackground ? 8 : 4 },
+                FileAccessStore = new FileSystemAgentFileStore(artifactsDir),
+                FileAccessProviderOptions = new FileAccessProviderOptions
+                {
+                    DisableReadOnlyToolApproval = true,
+                    DisableWriteToolApproval = true,
+                },
                 ChatOptions = new ChatOptions
                 {
                     Instructions = scenario.Instructions,
                     MaxOutputTokens = MaxOutputTokens,
                     Tools = scenario.ToolFactory(this._services),
                 }
-            });
+            };
+            if (skills is { Count: > 0 })
+            {
+                options.AgentSkillsSource = new AgentInMemorySkillsSource(skills);
+                // Reading skill instructions is safe; running scripts would still need a human.
+                options.ToolApprovalAgentOptions = new ToolApprovalAgentOptions
+                {
+                    AutoApprovalRules = [AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule]
+                };
+            }
+            else
+            {
+                options.DisableAgentSkillsProvider = true;
+            }
+            if (hasBackground) options.BackgroundAgents = background;
+
+            var agent = chatClient.AsHarnessAgent(options);
 
             var session = await agent.CreateSessionAsync(ct).ConfigureAwait(false);
+            this._trace?.Reset();
             this._current = new ActiveSession(
                 scenario,
                 agent,
                 session,
                 agent.GetService<TodoProvider>(),
-                agent.GetService<AgentModeProvider>());
+                agent.GetService<AgentModeProvider>())
+            {
+                ArtifactsDir = artifactsDir
+            };
 
             this._log.LogInformation("Scenario '{Scenario}' started.", scenario.Id);
             return await BuildStatusAsync(this._current, ct).ConfigureAwait(false);
@@ -133,9 +171,9 @@ public sealed class HarnessRuntime
 
             current.ExercisedCapabilities.Add(HarnessCapabilities.HistoryPersistence);
             current.ExercisedCapabilities.Add(HarnessCapabilities.Compaction);
-            current.ExercisedCapabilities.Add(HarnessCapabilities.ToolApproval);
-            current.ExercisedCapabilities.Add(HarnessCapabilities.OpenTelemetry);
             current.ExercisedCapabilities.Add(HarnessCapabilities.Looping);
+            current.PendingApprovals.Clear();
+            this._trace?.Reset();
         }
         finally
         {
@@ -164,8 +202,33 @@ public sealed class HarnessRuntime
         return BuildSummaryAsync(current, ct).ContinueWith(t => (ExecutionSummary?)t.Result, ct, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
-    public async Task StreamRunAsync(string prompt, HttpResponse response, CancellationToken ct)
+    public Task StreamRunAsync(string prompt, HttpResponse response, CancellationToken ct) =>
+        this.StreamCoreAsync(prompt, [new ChatMessage(ChatRole.User, prompt)], response, ct);
+
+    /// <summary>Resumes the session by answering every pending tool-approval request, then streams the continuation.</summary>
+    public Task StreamApprovalAsync(IReadOnlyList<ApprovalDecision> decisions, HttpResponse response, CancellationToken ct)
     {
+        var current = this._current;
+        if (current is null)
+            return WriteEventAsync(response, "error", new { message = "No scenario is active." }, ct);
+
+        var contents = new List<AIContent>();
+        foreach (var d in decisions)
+        {
+            if (!current.PendingApprovals.Remove(d.Id, out var request))
+                return WriteEventAsync(response, "error", new { message = $"No pending approval with id '{d.Id}'." }, ct);
+            contents.Add(request.CreateResponse(d.Approved, d.Reason));
+        }
+        if (contents.Count == 0)
+            return WriteEventAsync(response, "error", new { message = "No approval decisions supplied." }, ct);
+
+        var label = string.Join(", ", decisions.Select(d => d.Approved ? "approved" : "rejected"));
+        return this.StreamCoreAsync($"[approval: {label}]", [new ChatMessage(ChatRole.User, contents)], response, ct);
+    }
+
+    private async Task StreamCoreAsync(string label, IReadOnlyList<ChatMessage> input, HttpResponse response, CancellationToken ct)
+    {
+        var prompt = label;
         var current = this._current;
         if (current is null)
         {
@@ -185,7 +248,7 @@ public sealed class HarnessRuntime
             await WriteEventAsync(response, "start", new { prompt, mode = startMode, scenarioId = current.Scenario.Id }, ct);
 
             string? currentMessageId = null;
-            await foreach (var update in current.Agent.RunStreamingAsync(prompt, current.Session, cancellationToken: ct))
+            await foreach (var update in current.Agent.RunStreamingAsync(input, current.Session, cancellationToken: ct))
             {
                 // Every LoopAgent iteration produces a new AgentRunResponseUpdate.MessageId; the UI uses this
                 // to render each iteration as its own chat bubble instead of concatenating them.
@@ -236,6 +299,47 @@ public sealed class HarnessRuntime
                                 totalTokens = uc.Details.TotalTokenCount
                             }, ct);
                             break;
+
+                        case ToolApprovalRequestContent ar:
+                            var call = ar.ToolCall as FunctionCallContent;
+                            current.PendingApprovals[ar.RequestId] = ar;
+                            current.ExercisedCapabilities.Add(HarnessCapabilities.ToolApproval);
+                            await WriteEventAsync(response, "approval_request", new
+                            {
+                                id = ar.RequestId,
+                                tool = call?.Name ?? ar.ToolCall?.ToString(),
+                                arguments = call?.Arguments
+                            }, ct);
+                            break;
+
+                        case TextReasoningContent:
+                            break;
+
+                        case ErrorContent ec:
+                            this._log.LogWarning("Model returned error content: {Code} {Message} {Details}", ec.ErrorCode, ec.Message, ec.Details);
+                            await WriteEventAsync(response, "error", new
+                            {
+                                message = ec.Message,
+                                type = ec.ErrorCode ?? "ModelError",
+                                detail = ec.Details
+                            }, ct);
+                            break;
+
+                        default:
+                            this._log.LogInformation("Unhandled content type {Type}: {Content}", content.GetType().FullName, content);
+                            if (content.GetType().Name.Contains("WebSearch", StringComparison.OrdinalIgnoreCase))
+                            {
+                                current.ExercisedCapabilities.Add(HarnessCapabilities.WebSearch);
+                                current.DistinctToolsCalled.Add("web_search");
+                                await WriteEventAsync(response, "tool_call", new
+                                {
+                                    id = Guid.NewGuid().ToString("N"),
+                                    name = "web_search",
+                                    arguments = content.ToString(),
+                                    capability = HarnessCapabilities.WebSearch
+                                }, ct);
+                            }
+                            break;
                     }
                 }
             }
@@ -279,10 +383,45 @@ public sealed class HarnessRuntime
             ScenarioTitle: current.Scenario.Title,
             Mode: mode,
             Todos: todos,
-            ExercisedCapabilities: current.ExercisedCapabilities.ToList(),
+            ExercisedCapabilities: this.ExercisedWithTracing(current),
             HighlightedCapabilities: current.Scenario.HighlightedCapabilities,
             Model: this.ModelName,
-            Endpoint: this.Endpoint);
+            Endpoint: this.Endpoint,
+            PendingApprovals: current.PendingApprovals.Values.Select(a =>
+            {
+                var call = a.ToolCall as FunctionCallContent;
+                return new PendingApprovalDto(a.RequestId, call?.Name ?? "tool", call?.Arguments);
+            }).ToList());
+    }
+
+    private List<string> ExercisedWithTracing(ActiveSession current)
+    {
+        var set = new HashSet<string>(current.ExercisedCapabilities, StringComparer.Ordinal);
+        if (this._trace is { Count: > 0 }) set.Add(HarnessCapabilities.OpenTelemetry);
+        return set.ToList();
+    }
+
+    public IReadOnlyList<SpanDto> GetTrace() => this._trace?.Snapshot() ?? [];
+
+    public IReadOnlyList<ArtifactDto> ListArtifacts()
+    {
+        var dir = this._current?.ArtifactsDir;
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return [];
+        return Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
+            .Select(f => new FileInfo(f))
+            .OrderByDescending(f => f.LastWriteTimeUtc)
+            .Select(f => new ArtifactDto(Path.GetRelativePath(dir, f.FullName).Replace('\\', '/'), f.Length, f.LastWriteTimeUtc))
+            .ToList();
+    }
+
+    /// <summary>Resolves an artifact path, rejecting anything that escapes the scenario's artifacts folder.</summary>
+    public string? ResolveArtifact(string relativePath)
+    {
+        var dir = this._current?.ArtifactsDir;
+        if (string.IsNullOrEmpty(dir) || string.IsNullOrWhiteSpace(relativePath)) return null;
+        var root = Path.GetFullPath(dir) + Path.DirectorySeparatorChar;
+        var full = Path.GetFullPath(Path.Combine(dir, relativePath));
+        return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) && File.Exists(full) ? full : null;
     }
 
     private async Task<ExecutionSummary> BuildSummaryAsync(ActiveSession current, CancellationToken ct)
@@ -295,7 +434,7 @@ public sealed class HarnessRuntime
             c.Name,
             c.Description,
             Highlighted: highlighted.Contains(c.Id),
-            Exercised: current.ExercisedCapabilities.Contains(c.Id))).ToList();
+            Exercised: this.ExercisedWithTracing(current).Contains(c.Id))).ToList();
 
         return new ExecutionSummary(
             ScenarioId: current.Scenario.Id,
@@ -309,6 +448,17 @@ public sealed class HarnessRuntime
             OutputTokens: current.OutputTokens,
             Todos: status.Todos,
             Capabilities: breakdown);
+    }
+
+    private static string FindRepoRoot()
+    {
+        // `dotnet run` changes the working directory to the project folder, so locate the repo by its marker file.
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "NuGet.config")) && Directory.Exists(Path.Combine(dir.FullName, "ui")))
+                return dir.FullName;
+        }
+        return Directory.GetCurrentDirectory();
     }
 
     private static async Task<string> SafeModeAsync(ActiveSession current, CancellationToken ct)
@@ -331,6 +481,12 @@ public sealed class HarnessRuntime
 
 public sealed record TodoDto(int Id, string Title, string? Description, bool IsComplete);
 
+public sealed record ApprovalDecision(string Id, bool Approved, string? Reason = null);
+
+public sealed record PendingApprovalDto(string Id, string Tool, object? Arguments);
+
+public sealed record ArtifactDto(string Path, long Size, DateTime ModifiedUtc);
+
 public sealed record StatusSnapshot(
     string ScenarioId,
     string ScenarioTitle,
@@ -339,7 +495,8 @@ public sealed record StatusSnapshot(
     IReadOnlyList<string> ExercisedCapabilities,
     IReadOnlyList<string> HighlightedCapabilities,
     string Model,
-    string Endpoint);
+    string Endpoint,
+    IReadOnlyList<PendingApprovalDto> PendingApprovals);
 
 public sealed record CapabilityRow(
     string Id,

@@ -125,10 +125,36 @@ app.MapPost("/api/run", async (HttpContext ctx, RunRequest req, CancellationToke
     await runtime.StreamRunAsync(req.Prompt, ctx.Response, ct);
 });
 
+app.MapPost("/api/approval", async (HttpContext ctx, ApprovalRequest req, CancellationToken ct) =>
+{
+    if (req.Decisions is null || req.Decisions.Count == 0)
+    {
+        ctx.Response.StatusCode = 400;
+        await ctx.Response.WriteAsJsonAsync(new { error = "decisions are required" }, ct);
+        return;
+    }
+    ctx.Response.Headers.ContentType = "text/event-stream";
+    ctx.Response.Headers.CacheControl = "no-cache, no-transform";
+    ctx.Response.Headers["X-Accel-Buffering"] = "no";
+    await runtime.StreamApprovalAsync(req.Decisions, ctx.Response, ct);
+});
+
+app.MapGet("/api/session/trace", () => Results.Ok(new { spans = runtime.GetTrace() }));
+
+app.MapGet("/api/artifacts", () => Results.Ok(new { files = runtime.ListArtifacts() }));
+
+app.MapGet("/api/artifacts/file", (string path) =>
+{
+    var full = runtime.ResolveArtifact(path);
+    if (full is null) return Results.NotFound(new { error = "artifact not found" });
+    return Results.File(full, "text/plain; charset=utf-8", Path.GetFileName(full));
+});
+
 var port = Environment.GetEnvironmentVariable("HARNESS_PORT") ?? "5099";
 app.Run($"http://127.0.0.1:{port}");
 
 public sealed record StartRequest(string ScenarioId);
 public sealed record SetModeRequest(string Mode);
 public sealed record RunRequest(string Prompt);
+public sealed record ApprovalRequest(List<ApprovalDecision>? Decisions);
 

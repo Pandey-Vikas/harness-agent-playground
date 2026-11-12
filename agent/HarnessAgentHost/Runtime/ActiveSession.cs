@@ -2,6 +2,7 @@
 
 using HarnessAgentHost.Scenarios;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 
 namespace HarnessAgentHost.Runtime;
 
@@ -24,6 +25,8 @@ internal sealed class ActiveSession
     public int RunCount { get; set; }
     public long InputTokens { get; set; }
     public long OutputTokens { get; set; }
+    public string ArtifactsDir { get; init; } = string.Empty;
+    public Dictionary<string, ToolApprovalRequestContent> PendingApprovals { get; } = new(StringComparer.Ordinal);
 
     public ActiveSession(HarnessScenario scenario, AIAgent agent, AgentSession session,
                         TodoProvider? todos, AgentModeProvider? modes)
@@ -34,12 +37,9 @@ internal sealed class ActiveSession
         this.Todos = todos;
         this.Modes = modes;
 
-        // Harness-enabled defaults are exercised as soon as the scenario starts, because
-        // the runtime pipeline runs them for every model call.
+        // Pipeline defaults the harness always runs; approval and tracing are marked only on real evidence.
         this.ExercisedCapabilities.Add(HarnessCapabilities.HistoryPersistence);
         this.ExercisedCapabilities.Add(HarnessCapabilities.Compaction);
-        this.ExercisedCapabilities.Add(HarnessCapabilities.ToolApproval);
-        this.ExercisedCapabilities.Add(HarnessCapabilities.OpenTelemetry);
         this.ExercisedCapabilities.Add(HarnessCapabilities.Looping);
     }
 }

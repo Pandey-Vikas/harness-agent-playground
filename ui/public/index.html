@@ -43,8 +43,7 @@
       <section id="landingView" class="landing">
         <div class="landing-intro">
           <h2>Pick a scenario</h2>
-          <p>Three end-to-end demos of the Agent Framework Harness — each exercises most of the capability matrix.
-            Click a card to start; the harness spins up in <strong>plan</strong> mode.</p>
+          <p>Three end-to-end demos of the Agent Framework Harness. Each one starts in <strong>plan</strong> mode, waits for your approval, then executes with live tool calls, an OpenTelemetry trace and saved files.</p>
         </div>
         <div class="cards" id="scenarioCards">
           <!-- filled by app.js -->
@@ -114,6 +113,20 @@
             </section>
 
             <section class="side-panel">
+              <div class="side-header"><h3>Files</h3><button type="button" class="link" id="refreshFilesButton">refresh</button></div>
+              <ul class="files" id="filesList">
+                <li class="side-empty">No files saved yet.</li>
+              </ul>
+            </section>
+
+            <section class="side-panel">
+              <div class="side-header"><h3>Trace</h3><span class="side-count trace-summary" id="traceSummary"></span></div>
+              <ol class="trace" id="traceList">
+                <li class="side-empty">No spans yet.</li>
+              </ol>
+            </section>
+
+            <section class="side-panel">
               <div class="side-header"><h3>Runtime</h3></div>
               <dl class="kv">
                 <dt>endpoint</dt><dd id="endpointLabel">—</dd>
@@ -146,6 +159,22 @@
         <div class="modal-footer">
           <button type="button" class="secondary" id="summaryBackToLanding">Back to scenarios</button>
           <button type="button" class="primary" id="summaryContinue">Keep working</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="fileModal" hidden>
+      <div class="modal">
+        <div class="modal-header">
+          <div>
+            <div class="scenario-domain">Saved by the agent</div>
+            <h2 id="fileTitle"></h2>
+          </div>
+          <button type="button" class="link" id="closeFile" aria-label="Close">✕</button>
+        </div>
+        <div class="modal-body file-body msg-agent"><div class="msg-body" id="fileBody"></div></div>
+        <div class="modal-footer">
+          <a class="secondary button-link" id="fileDownload" href="#" download>Download</a>
         </div>
       </div>
     </div>
