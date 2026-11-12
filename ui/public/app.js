@@ -20,7 +20,8 @@ const state = {
   approvalItems: new Map(),
   rateLimitRetries: 0,
   rateLimitHit: false,
-  seenArtifacts: null
+  seenArtifacts: null,
+  autoApprove: (() => { try { return localStorage.getItem('harnessagent.autoApprove') === '1'; } catch { return false; } })()
 };
 
 async function api(path, options = {}) {
@@ -147,6 +148,8 @@ async function startScenario(scenarioId) {
     state.status = status;
     state.totalTokens = 0;
     showPlayground(scenario, status);
+    await setApprovalMode(state.autoApprove);
+    if (scenario.id === 'incident-commander') await setIncident(true); else $('incidentBar').hidden = true;
   } catch (error) {
     alert(`Could not start scenario: ${error.message}`);
   }
@@ -208,6 +211,7 @@ function showPlayground(scenario, status) {
 
 function backToLanding() {
   if (state.streaming && !confirm('A run is still streaming. Leave and go back to scenarios?')) return;
+  if (state.currentScenario?.id === 'incident-commander') setIncident(false);
   state.currentScenario = null;
   state.status = null;
   state.streaming = false;
@@ -773,6 +777,16 @@ function maybeShowApproval(status) {
   const todos = Array.isArray(status.todos) ? status.todos : [];
   if (todos.length === 0) return; // no plan yet, nothing to approve
 
+  if (state.autoApprove) {
+    appendChat('system', 'Plan auto-approved (approvals: auto).');
+    // 'done' fires while the stream is still open; wait for it to close before switching mode.
+    (async () => {
+      while (state.streaming) await new Promise((r) => setTimeout(r, 100));
+      await approveAndExecute();
+    })();
+    return;
+  }
+
   const bubbles = document.querySelectorAll('#chatLog .msg-agent:not(.msg-report):not([hidden])');
   const last = bubbles[bubbles.length - 1];
   if (!last || last.querySelector('.approval-panel')) return;
@@ -812,6 +826,7 @@ function disableApprovalPanel(panel) {
  */
 function handlePostRun(data) {
   refreshInsights();
+  if (state.currentScenario?.id === 'incident-commander') setIncident();
   if (state.rateLimitHit) return; // scheduleRateLimitRetry takes over once the stream closes
   state.rateLimitRetries = 0;
 
@@ -864,6 +879,41 @@ function handlePostRun(data) {
   maybeShowApproval(data);
 }
 
+// ---------------- Approval mode (manual vs auto) ----------------
+
+function renderApprovalMode() {
+  const btn = $('autoApproveToggle');
+  btn.textContent = state.autoApprove ? 'Approvals: auto' : 'Approvals: manual';
+  btn.setAttribute('aria-pressed', String(state.autoApprove));
+  btn.classList.toggle('toggle-on', state.autoApprove);
+}
+
+async function setApprovalMode(auto) {
+  state.autoApprove = auto;
+  try { localStorage.setItem('harnessagent.autoApprove', auto ? '1' : '0'); } catch { /* ignore */ }
+  renderApprovalMode();
+  try { await api('/api/agent/approval-mode', { method: 'POST', body: { auto } }); } catch { /* host may be restarting */ }
+}
+$('autoApproveToggle').addEventListener('click', () => setApprovalMode(!state.autoApprove));
+
+// ---------------- Live incident (SRE scenario) ----------------
+
+async function setIncident(enable) {
+  try {
+    const s = enable === undefined
+      ? await api('/api/agent/chaos')
+      : await api('/api/agent/chaos', { method: 'POST', body: { enable } });
+    const bar = $('incidentBar');
+    bar.hidden = false;
+    bar.classList.toggle('active', !!s.active);
+    $('incidentText').textContent = s.active
+      ? `Live incident active on harness-host: +${s.latencyMs} ms latency and ${s.errorRatePct}% HTTP 503 (change ${s.changeId})`
+      : 'No active incident. harness-host is running normally.';
+    $('incidentToggle').textContent = s.active ? 'clear incident' : 'inject incident';
+  } catch { /* bar is informational */ }
+}
+$('incidentToggle').addEventListener('click', () => setIncident($('incidentBar').classList.contains('active') ? false : true));
+
 // ---------------- Human-in-the-loop tool approval ----------------
 
 function formatArgs(args) {
@@ -909,6 +959,7 @@ function addApprovalRequest(req) {
   };
   li.querySelector('.approval-approve').addEventListener('click', () => decide(true));
   li.querySelector('.approval-reject').addEventListener('click', () => decide(false));
+  if (state.autoApprove) decide(true);
   $('chatLog').scrollTop = $('chatLog').scrollHeight;
 }
 

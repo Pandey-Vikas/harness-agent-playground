@@ -13,7 +13,8 @@ public sealed record SpanDto(
     string Kind,
     double StartMs,
     double DurationMs,
-    string? Detail);
+    string? Detail,
+    DateTime StartUtc);
 
 /// <summary>
 /// In-process OpenTelemetry sink: listens to the harness's own <see cref="ActivitySource"/>s and keeps the
@@ -67,7 +68,8 @@ public sealed class TraceCollector : IDisposable
                 Classify(a),
                 (a.StartTimeUtc - this._epoch).TotalMilliseconds,
                 a.Duration.TotalMilliseconds,
-                Describe(a)));
+                Describe(a),
+                a.StartTimeUtc));
         }
         return list.OrderBy(s => s.StartMs).ToList();
     }

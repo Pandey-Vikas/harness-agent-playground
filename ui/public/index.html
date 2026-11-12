@@ -63,6 +63,11 @@
 
         <div class="play-grid">
           <div class="chat-column">
+            <div class="incident-bar" id="incidentBar" hidden>
+              <span class="incident-dot" aria-hidden="true"></span>
+              <span id="incidentText"></span>
+              <button type="button" class="link" id="incidentToggle"></button>
+            </div>
             <div class="chat-log" id="chatLog"></div>
 
             <div class="thinker" id="thinker" hidden aria-live="polite">
@@ -76,6 +81,7 @@
                 <div class="composer-left">
                   <button type="button" class="secondary" id="resetButton" title="Rotate the AgentSession, keep the scenario">Reset</button>
                   <button type="button" class="secondary" id="summaryButton" title="Show execution summary">Summary</button>
+                  <button type="button" class="secondary" id="autoApproveToggle" aria-pressed="false" title="Manual: you approve the plan and each protected tool call. Auto: the harness approval rule approves them.">Approvals: manual</button>
                 </div>
                 <div class="composer-right">
                   <button type="button" class="secondary danger" id="stopButton" hidden title="Abort the current run">Stop</button>

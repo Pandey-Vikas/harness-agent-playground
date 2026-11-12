@@ -170,6 +170,10 @@ const server = createServer(async (request, response) => {
   if (url.pathname === '/api/agent/run' && request.method === 'POST') return proxySse(request, response, '/api/run');
   if (url.pathname === '/api/agent/approval' && request.method === 'POST') return proxySse(request, response, '/api/approval');
   if (url.pathname === '/api/agent/trace' && request.method === 'GET') return proxyJson(request, response, '/api/session/trace');
+  if (url.pathname === '/api/agent/chaos' && request.method === 'GET') return proxyJson(request, response, '/api/chaos');
+  if (url.pathname === '/api/agent/approval-mode' && request.method === 'GET') return proxyJson(request, response, '/api/approval-mode');
+  if (url.pathname === '/api/agent/approval-mode' && request.method === 'POST') return proxyJson(request, response, '/api/approval-mode', { method: 'POST' });
+  if (url.pathname === '/api/agent/chaos' && request.method === 'POST') return proxyJson(request, response, '/api/chaos', { method: 'POST' });
   if (url.pathname === '/api/agent/artifacts' && request.method === 'GET') return proxyJson(request, response, '/api/artifacts');
   if (url.pathname === '/api/agent/artifact' && request.method === 'GET') return proxyRaw(response, `/api/artifacts/file${url.search}`);
 

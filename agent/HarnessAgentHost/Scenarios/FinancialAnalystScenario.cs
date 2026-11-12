@@ -35,6 +35,8 @@ public static class FinancialAnalystScenario
             suffixes: `.NS` NSE, `.BO` BSE, `.L` London, `.HK` Hong Kong, `.TO` Toronto. When the user says
             "Microsoft" they mean `MSFT`. When they say just "Infosys" use `INFY.NS`.
             Cite prices with the currency symbol from `get_stock_snapshot` (₹, $, £). Never show INR as $.
+            For web search results cite the publisher and URL in plain text; never copy internal citation
+            markers such as `web.run` or `citeturn...`.
 
             **Delegation.** Two background agents are registered: `peer-analyst` (compares the company with its
             closest peers) and `news-analyst` (summarises recent headlines and sentiment).

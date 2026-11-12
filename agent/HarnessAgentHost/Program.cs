@@ -17,6 +17,15 @@ builder.Services.AddHttpClient<YahooFinanceClient>()
         AutomaticDecompression = System.Net.DecompressionMethods.All
     });
 builder.Services.AddSingleton<FinanceTools>();
+
+// Live telemetry of this host feeds the SRE scenario; marketing tools call public research APIs.
+var telemetry = new LiveTelemetry();
+builder.Services.AddSingleton(telemetry);
+builder.Logging.AddProvider(new RingLoggerProvider(telemetry));
+builder.Services.AddHttpClient("probe");
+builder.Services.AddHostedService<TelemetryWorker>();
+builder.Services.AddHttpClient<MarketingTools>();
+builder.Services.AddSingleton<SreTools>();
 builder.Services.AddSingleton<HarnessRuntime>();
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
     .WithOrigins("http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3100", "http://127.0.0.1:3100")
@@ -47,6 +56,54 @@ app.UseExceptionHandler(errorApp =>
 
 var runtime = app.Services.GetRequiredService<HarnessRuntime>();
 await runtime.InitializeAsync();
+
+// Measures every non-streaming request; applies the injected fault (if any) so the SRE scenario sees a real incident.
+app.Use(async (ctx, next) =>
+{
+    var path = ctx.Request.Path.Value ?? string.Empty;
+    // Only the public read APIs are monitored and fault-eligible; run/mode/approval control traffic must stay reliable.
+    var monitored = path is "/health" or "/api/scenarios" or "/api/artifacts" or "/api/session/trace";
+    if (!monitored) { await next(); return; }
+
+    var log = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("HarnessAgentHost.Http");
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    if (telemetry.FaultActive)
+    {
+        await Task.Delay(telemetry.FaultLatencyMs);
+        if (Random.Shared.Next(100) < telemetry.FaultErrorRatePct)
+        {
+            ctx.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            await ctx.Response.WriteAsJsonAsync(new { error = "session-store dependency timed out" });
+            sw.Stop();
+            log.LogError("Request {Route} failed with 503: session-store client timed out after {Ms} ms", path, Math.Round(sw.Elapsed.TotalMilliseconds));
+            telemetry.RecordRequest(path, 503, sw.Elapsed.TotalMilliseconds);
+            return;
+        }
+    }
+    await next();
+    sw.Stop();
+    telemetry.RecordRequest(path, ctx.Response.StatusCode, sw.Elapsed.TotalMilliseconds);
+    if (sw.Elapsed.TotalMilliseconds > 500)
+        log.LogWarning("Slow request {Route} took {Ms} ms (budget 500 ms)", path, Math.Round(sw.Elapsed.TotalMilliseconds));
+});
+
+app.MapGet("/api/chaos", () => Results.Ok(new
+{
+    active = telemetry.FaultActive,
+    latencyMs = telemetry.FaultLatencyMs,
+    errorRatePct = telemetry.FaultErrorRatePct,
+    changeId = telemetry.FaultChangeId
+}));
+
+app.MapPost("/api/chaos", (ChaosRequest req) =>
+{
+    if (req.Enable)
+    {
+        if (!telemetry.FaultActive) telemetry.InjectFault(Math.Clamp(req.LatencyMs ?? 1500, 100, 5000), Math.Clamp(req.ErrorRatePct ?? 25, 0, 90));
+    }
+    else telemetry.ClearFault(null, "cleared from the demo UI");
+    return Results.Ok(new { active = telemetry.FaultActive, latencyMs = telemetry.FaultLatencyMs, errorRatePct = telemetry.FaultErrorRatePct, changeId = telemetry.FaultChangeId });
+});
 
 app.MapGet("/health", () => Results.Ok(new
 {
@@ -139,6 +196,14 @@ app.MapPost("/api/approval", async (HttpContext ctx, ApprovalRequest req, Cancel
     await runtime.StreamApprovalAsync(req.Decisions, ctx.Response, ct);
 });
 
+app.MapGet("/api/approval-mode", () => Results.Ok(new { auto = runtime.AutoApprove }));
+
+app.MapPost("/api/approval-mode", (ApprovalModeRequest req) =>
+{
+    runtime.AutoApprove = req.Auto;
+    return Results.Ok(new { auto = runtime.AutoApprove });
+});
+
 app.MapGet("/api/session/trace", () => Results.Ok(new { spans = runtime.GetTrace() }));
 
 app.MapGet("/api/artifacts", () => Results.Ok(new { files = runtime.ListArtifacts() }));
@@ -156,5 +221,7 @@ app.Run($"http://127.0.0.1:{port}");
 public sealed record StartRequest(string ScenarioId);
 public sealed record SetModeRequest(string Mode);
 public sealed record RunRequest(string Prompt);
+public sealed record ChaosRequest(bool Enable, int? LatencyMs, int? ErrorRatePct);
+public sealed record ApprovalModeRequest(bool Auto);
 public sealed record ApprovalRequest(List<ApprovalDecision>? Decisions);
 

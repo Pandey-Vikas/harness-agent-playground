@@ -87,7 +87,7 @@ public static class ScenarioSkills
                 ```
                 # Incident Post-Mortem — {SERVICE}
 
-                *Simulated telemetry for demonstration.*
+                *Telemetry measured live from this host.*
 
                 ## Overview
                 (3-4 sentences: what was seen and the top hypothesis.)
@@ -145,7 +145,7 @@ public static class ScenarioSkills
                 ```
                 # Launch Brief — {PRODUCT} in {MARKET}
 
-                *Simulated research for demonstration.*
+                *Live research: Apple App Store, Google autocomplete, World Bank and web search. Reach and budget figures are assumptions.*
 
                 ## Overview
                 (3-4 sentences.)
@@ -161,7 +161,7 @@ public static class ScenarioSkills
                 (1-2 sentences.)
 
                 ## Channel mix (4-week budget split)
-                | Channel | % | Est. reach |
+                | Channel | % | Assumed reach and why |
                 |---|---:|---|
 
                 ## 4-week content calendar
@@ -172,7 +172,7 @@ public static class ScenarioSkills
 
                 ## Sample copy
                 ### Instagram Reels
-                (2-3 voice variants from `draft_copy`.)
+                (2-3 voice variants you write, grounded in the search suggestions.)
 
                 ### Email
                 (2-3 voice variants.)

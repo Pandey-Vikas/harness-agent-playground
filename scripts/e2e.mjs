@@ -56,6 +56,12 @@ async function main() {
   log(`=== ${SCENARIO} ===`);
   const start = await (await fetch(`${BASE}/api/session/start`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scenarioId: SCENARIO }) })).json();
   log(`started: mode=${start.mode}`);
+  if (SCENARIO === 'incident-commander') {
+    // The UI injects the live fault when the scenario starts; wait so the probes record degraded samples.
+    const chaos = await (await post('/api/chaos', { enable: true })).json();
+    log(`injected fault ${chaos.changeId}; collecting degraded samples for 45s`);
+    await new Promise((ok) => setTimeout(ok, 45000));
+  }
 
   let r = await consume(await post('/api/run', { prompt: PROMPT }), 'plan', report);
   const planTodos = r?.done?.todos?.length ?? 0;

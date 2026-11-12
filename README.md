@@ -13,8 +13,8 @@ Three scenarios show the harness doing real work in three domains. After each ru
 | Scenario | Domain | What it shows |
 | --- | --- | --- |
 | Investment Thesis Builder | Financial research | Live Yahoo Finance data for Microsoft (MSFT) or any listing. Two **background agents** (`peer-analyst`, `news-analyst`) run in parallel, the **investment-memo skill** sets the format, hosted **web search** checks fresh news, and the memo is saved with **file access**. |
-| SRE Incident Commander | DevOps / SRE | Triage a latency alert, then the harness **pauses for human approval** before `rollback_deployment` runs. The post-mortem comes from the **incident-postmortem skill**. Telemetry is simulated. |
-| Launch Campaign Studio | Marketing / Product | Personas, channel mix, content calendar and sample copy, shaped by the **campaign-brief skill** and saved as a brief. Research tools are simulated. |
+| SRE Incident Commander | DevOps / SRE | A **live incident on this very host**: starting the scenario injects a real configuration fault (latency and 503s). The agent investigates with measured request latency and error rate, captured log lines, git history, configuration changes and HTTP probes, writes a post-mortem with the **incident-postmortem skill**, then the harness **pauses for human approval** before `rollback_deployment`. Approving really reverts the fault and the tool reports latency before and after. |
+| Launch Campaign Studio | Marketing / Product | Live research: Apple App Store search for competitors, Google autocomplete for search demand, World Bank audience sizing, and hosted **web search** for channel benchmarks. The **campaign-brief skill** shapes the brief, which is saved with file access. Reach and budget figures are labelled as assumptions. |
 
 Every scenario starts in **plan** mode: the agent writes a todo list, you approve it, the app switches to **execute** mode, and a `TodoCompletionLoopEvaluator` keeps the agent going until every todo is done.
 
@@ -69,6 +69,12 @@ var agent = chatClient.AsHarnessAgent(new HarnessAgentOptions
 
 ### Human approval flow
 
+The **Approvals** button under the composer switches between two modes:
+
+- **Manual** (default): you approve the plan and every protected tool call.
+- **Auto**: the plan is approved automatically and a harness auto-approval rule (`ToolApprovalAgentOptions.AutoApprovalRules`) approves protected tool calls, so nothing pauses.
+
+In manual mode:
 1. The model calls `rollback_deployment`. The harness returns a `ToolApprovalRequestContent` instead of executing it.
 2. The host emits an `approval_request` SSE event; the UI shows the exact tool and arguments.
 3. The human clicks Approve or Reject. The UI posts to `/api/agent/approval`.
@@ -120,7 +126,7 @@ node scripts/e2e.mjs launch-studio
 
 ## Notes for presenters
 
-- Market data in the financial scenario is live from Yahoo Finance. SRE and marketing data is simulated and labelled as such in the reports.
+- Every number in all three scenarios is measured or fetched live: Yahoo Finance (financial), this host's own telemetry (SRE), and App Store, Google autocomplete, World Bank and web search (marketing). The only scripted element is the injected fault that creates the SRE incident; its effects are real and measurable.
 - gpt-5.2 occasionally answers the first execute turn with a refusal; the loop evaluator re-prompts and the run continues. The UI hides those bubbles.
 - Reset (composer) rotates the session without leaving the scenario.
 

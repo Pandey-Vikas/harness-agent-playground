@@ -7,153 +7,167 @@ using Microsoft.Extensions.AI;
 namespace HarnessAgentHost.Tools;
 
 /// <summary>
-/// Demo marketing / product tools for the launch-campaign scenario. All data is fabricated but
-/// deterministic per input, so the model can build on prior calls without an actual research feed.
+/// Live market-research tools. Competitors come from the Apple App Store search API, search demand from Google's
+/// live autocomplete, and audience sizing from the World Bank indicators API. No key and no fabricated numbers.
 /// </summary>
-public static class MarketingTools
+public sealed class MarketingTools
 {
-    public static IList<AITool> CreateAll() =>
+    private static readonly JsonSerializerOptions s_json = new(JsonSerializerDefaults.Web);
+
+    private static readonly (string Code, string Indicator, string Label)[] s_indicators =
     [
-        AIFunctionFactory.Create(CompetitorScan),
-        AIFunctionFactory.Create(KeywordTrends),
-        AIFunctionFactory.Create(GeneratePersona),
-        AIFunctionFactory.Create(EstimateReach),
-        AIFunctionFactory.Create(DraftCopy),
-        AIFunctionFactory.Create(SuggestChannels),
+        ("population", "SP.POP.TOTL", "Total population"),
+        ("internetUsersPct", "IT.NET.USER.ZS", "Individuals using the internet (% of population)"),
+        ("mobileSubsPer100", "IT.CEL.SETS.P2", "Mobile cellular subscriptions (per 100 people)"),
+        ("gdpPerCapitaUsd", "NY.GDP.PCAP.CD", "GDP per capita (current US$)"),
+        ("tertiaryEnrollmentPct", "SE.TER.ENRR", "School enrollment, tertiary (% gross)"),
     ];
 
-    [Description("Returns 3 fabricated competitor products with a one-line positioning summary and rough price band.")]
-    public static string CompetitorScan(
-        [Description("Product being launched, e.g. 'AI-powered notes app for students'.")] string product,
-        [Description("Target market/region, e.g. 'India' or 'US SMB'.")] string market)
+    private readonly HttpClient _http;
+    private readonly ILogger<MarketingTools> _log;
+    private Dictionary<string, string>? _countries;
+
+    public MarketingTools(HttpClient http, ILogger<MarketingTools> log)
     {
-        var rng = SeededRng($"{product}:{market}:comp");
-        var pool = new[]
+        this._http = http;
+        this._log = log;
+        this._http.Timeout = TimeSpan.FromSeconds(15);
+        if (!this._http.DefaultRequestHeaders.UserAgent.Any())
+            this._http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 harness-playground");
+    }
+
+    public IList<AITool> CreateAll() =>
+    [
+        AIFunctionFactory.Create(this.SearchAppStoreAsync, new AIFunctionFactoryOptions { Name = "search_app_store" }),
+        AIFunctionFactory.Create(this.SearchSuggestionsAsync, new AIFunctionFactoryOptions { Name = "search_suggestions" }),
+        AIFunctionFactory.Create(this.GetMarketProfileAsync, new AIFunctionFactoryOptions { Name = "get_market_profile" }),
+    ];
+
+    [Description("Live competitor scan: searches the Apple App Store for products matching a query in a country and returns name, seller, price, rating, rating count, genre and release date for the top results.")]
+    public async Task<string> SearchAppStoreAsync(
+        [Description("What to search for, e.g. 'AI notes app' or 'study flashcards'.")] string query,
+        [Description("Target market, e.g. 'India', 'United States', 'Germany'.")] string market,
+        CancellationToken ct = default)
+    {
+        try
         {
-            "brand-north-star", "quill-pilot", "notabl.ai", "studynote-x",
-            "focusflow", "brainboard", "recallr", "loom-notes"
-        };
-        var competitors = pool.OrderBy(_ => rng.Next()).Take(3).Select(name => new
-        {
-            name,
-            positioning = new[]
+            var iso = await this.ResolveCountryAsync(market, ct);
+            var cc = (iso ?? "US").ToLowerInvariant();
+            var url = $"https://itunes.apple.com/search?term={Uri.EscapeDataString(query)}&country={cc}&entity=software&limit=8";
+            using var doc = JsonDocument.Parse(await this._http.GetStringAsync(url, ct));
+            var apps = doc.RootElement.GetProperty("results").EnumerateArray().Take(6).Select(a => new
             {
-                "Freemium AI summarization for lectures.",
-                "Premium team notebooks with citation graph.",
-                "Local-first offline notes with weekly AI review.",
-                "Voice-to-notes with automatic study card generation."
-            }[rng.Next(4)],
-            monthlyPriceUsd = new[] { 0.0, 4.99, 6.99, 9.99, 12.99 }[rng.Next(5)]
-        });
-        return JsonSerializer.Serialize(new { product, market, competitors, note = "DEMO DATA." });
+                name = Str(a, "trackName"),
+                seller = Str(a, "sellerName"),
+                priceFormatted = Str(a, "formattedPrice"),
+                avgRating = Num(a, "averageUserRating"),
+                ratingCount = Num(a, "userRatingCount"),
+                genre = Str(a, "primaryGenreName"),
+                released = Str(a, "releaseDate"),
+                description = Trim(Str(a, "description"), 220),
+            }).ToList();
+            return Json(new { query, market, storeCountry = cc.ToUpperInvariant(), apps, source = "Apple App Store Search API (live)" });
+        }
+        catch (Exception ex)
+        {
+            return Error("search_app_store", ex);
+        }
     }
 
-    [Description("Returns fabricated top search keywords and rough monthly volumes for a topic in a market.")]
-    public static string KeywordTrends(
-        [Description("Topic to research, e.g. 'AI notes app'.")] string topic,
-        [Description("Target market/region.")] string market)
+    [Description("Live search-demand signals: Google autocomplete suggestions for a topic in a market. These are real queries people type; suggestions are ordered by popularity, but no volumes are available.")]
+    public async Task<string> SearchSuggestionsAsync(
+        [Description("Topic or seed query, e.g. 'ai notes app'.")] string topic,
+        [Description("Target market, e.g. 'India'.")] string market,
+        CancellationToken ct = default)
     {
-        var rng = SeededRng($"{topic}:{market}:kw");
-        var seeds = new[]
+        try
         {
-            "best {topic} for students", "{topic} free", "{topic} vs notion",
-            "{topic} for exam prep", "how to use {topic}", "{topic} offline",
-        };
-        var kws = seeds.OrderBy(_ => rng.Next()).Take(5).Select(t => new
-        {
-            keyword = t.Replace("{topic}", topic.ToLowerInvariant()),
-            monthlyVolume = rng.Next(2_000, 60_000),
-            competitionScore = Math.Round(rng.NextDouble(), 2)
-        });
-        return JsonSerializer.Serialize(new { topic, market, keywords = kws, note = "DEMO DATA." });
-    }
-
-    [Description("Returns a fabricated audience persona (demographics, goals, pains, media diet) for a segment.")]
-    public static string GeneratePersona(
-        [Description("Segment description, e.g. 'undergraduate STEM students in Tier-2 Indian cities'.")] string segment)
-    {
-        var rng = SeededRng($"{segment}:persona");
-        var name = new[] { "Aarav", "Priya", "Kabir", "Meera", "Rohit", "Ananya" }[rng.Next(6)];
-        return JsonSerializer.Serialize(new
-        {
-            segment,
-            persona = new
+            var iso = (await this.ResolveCountryAsync(market, ct) ?? "US").ToLowerInvariant();
+            var seeds = new[] { topic, $"best {topic}", $"{topic} for", $"{topic} vs", $"{topic} free" };
+            var groups = new List<object>();
+            foreach (var seed in seeds)
             {
-                name,
-                ageRange = new[] { "17-20", "19-22", "20-24" }[rng.Next(3)],
-                context = "Balances heavy course load with side projects; commutes 45+ minutes.",
-                goals = new[] { "clear exams with less study time", "capture ideas across devices", "review notes offline in transit" },
-                pains = new[] { "typing on phone", "losing scattered notes", "no time to summarize" },
-                mediaDiet = new[] { "Instagram Reels", "YouTube (2x speed)", "Reddit r/IndianStudents", "WhatsApp study groups" },
-                priceSensitivityUsdMonthly = new[] { 0.0, 2.0, 4.99 }[rng.Next(3)]
-            },
-            note = "DEMO DATA."
-        });
-    }
-
-    [Description("Returns a fabricated reach and cost estimate for a channel at a monthly budget.")]
-    public static string EstimateReach(
-        [Description("Channel name, e.g. 'YouTube pre-roll' | 'Instagram Reels' | 'Google Search'.")] string channel,
-        [Description("Monthly budget in USD.")] double budgetUsd)
-    {
-        var rng = SeededRng($"{channel}:{budgetUsd}");
-        var cpm = 2 + rng.NextDouble() * 12;
-        var impressions = (long)(budgetUsd / cpm * 1000);
-        var ctr = Math.Round(0.4 + rng.NextDouble() * 3.0, 2);
-        var clicks = (long)(impressions * ctr / 100);
-        var installs = (long)(clicks * (0.02 + rng.NextDouble() * 0.08));
-        return JsonSerializer.Serialize(new
+                var url = $"https://suggestqueries.google.com/complete/search?client=firefox&q={Uri.EscapeDataString(seed)}&hl=en&gl={iso}";
+                using var doc = JsonDocument.Parse(await this._http.GetStringAsync(url, ct));
+                var items = doc.RootElement[1].EnumerateArray().Select(e => e.GetString()).Where(s => !string.IsNullOrWhiteSpace(s)).Take(6).ToList();
+                groups.Add(new { seed, suggestions = items });
+            }
+            return Json(new { topic, market, groups, source = "Google autocomplete (live)" });
+        }
+        catch (Exception ex)
         {
-            channel,
-            budgetUsd,
-            cpmUsd = Math.Round(cpm, 2),
-            estimatedImpressions = impressions,
-            estimatedClickThroughRatePct = ctr,
-            estimatedClicks = clicks,
-            estimatedInstalls = installs,
-            note = "DEMO DATA."
-        });
+            return Error("search_suggestions", ex);
+        }
     }
 
-    [Description("Returns 3 draft copy variants for a channel and message length. Use for Twitter thread hooks, ad headlines, email subject lines, etc.")]
-    public static string DraftCopy(
-        [Description("Channel: 'twitter' | 'email' | 'reels' | 'press-release'.")] string channel,
-        [Description("Core message the copy should communicate.")] string message,
-        [Description("Length: 'short' | 'medium' | 'long'.")] string length = "short")
+    [Description("Live audience sizing for a country from the World Bank: population, internet users %, mobile subscriptions, GDP per capita and tertiary enrollment, each with the year of the latest value.")]
+    public async Task<string> GetMarketProfileAsync(
+        [Description("Country name, e.g. 'India' or 'Germany'.")] string market,
+        CancellationToken ct = default)
     {
-        var rng = SeededRng($"{channel}:{message}:{length}");
-        var voices = new[] { "punchy", "curious", "confident", "friendly" };
-        var variants = Enumerable.Range(0, 3).Select(_ => new
+        try
         {
-            voice = voices[rng.Next(voices.Length)],
-            copy = $"[{channel}/{length}] {message} — {new[] { "here's why it matters", "how it saves you 2 hours a week", "your notes, but smarter", "study smarter, not longer" }[rng.Next(4)]}"
-        });
-        return JsonSerializer.Serialize(new { channel, length, variants, note = "DEMO DATA — swap for a real skill in production." });
-    }
+            var iso = await this.ResolveCountryAsync(market, ct);
+            if (iso is null) return Json(new { market, error = "Could not match that market to a country in the World Bank list." });
 
-    [Description("Returns a recommended channel mix for a segment and total monthly budget, split into percentages.")]
-    public static string SuggestChannels(
-        [Description("Segment description.")] string segment,
-        [Description("Total monthly marketing budget in USD.")] double totalBudgetUsd)
-    {
-        var rng = SeededRng($"{segment}:{totalBudgetUsd}:mix");
-        var pool = new[] { "YouTube Shorts", "Instagram Reels", "Google Search", "Reddit ads", "Campus ambassadors", "WhatsApp broadcast" };
-        var picks = pool.OrderBy(_ => rng.Next()).Take(4).ToArray();
-        var weights = Enumerable.Range(0, picks.Length).Select(_ => rng.NextDouble()).ToArray();
-        var sum = weights.Sum();
-        var mix = picks.Select((p, i) => new
+            var rows = new List<object>();
+            foreach (var (code, indicator, label) in s_indicators)
+            {
+                var url = $"https://api.worldbank.org/v2/country/{iso}/indicator/{indicator}?format=json&mrnev=1";
+                using var doc = JsonDocument.Parse(await this._http.GetStringAsync(url, ct));
+                object? row = null;
+                if (doc.RootElement.ValueKind == JsonValueKind.Array && doc.RootElement.GetArrayLength() > 1 && doc.RootElement[1].ValueKind == JsonValueKind.Array)
+                {
+                    var first = doc.RootElement[1].EnumerateArray().FirstOrDefault();
+                    if (first.ValueKind == JsonValueKind.Object && first.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.Number)
+                        row = new { metric = code, label, value = Math.Round(v.GetDouble(), 2), year = Str(first, "date") };
+                }
+                rows.Add(row ?? new { metric = code, label, value = (double?)null, year = (string?)null });
+            }
+            return Json(new { market, iso, indicators = rows, source = "World Bank Open Data API (latest available year)" });
+        }
+        catch (Exception ex)
         {
-            channel = p,
-            allocationPct = Math.Round(weights[i] / sum * 100, 1),
-            monthlyBudgetUsd = Math.Round(totalBudgetUsd * weights[i] / sum, 2)
-        });
-        return JsonSerializer.Serialize(new { segment, totalBudgetUsd, mix, note = "DEMO DATA." });
+            return Error("get_market_profile", ex);
+        }
     }
 
-    private static Random SeededRng(string key)
+    private async Task<string?> ResolveCountryAsync(string market, CancellationToken ct)
     {
-        int seed = 0;
-        foreach (var c in key) seed = unchecked(seed * 31 + c);
-        return new Random(seed);
+        if (string.IsNullOrWhiteSpace(market)) return null;
+        this._countries ??= await this.LoadCountriesAsync(ct);
+        var key = market.Trim().ToLowerInvariant();
+        if (this._countries.TryGetValue(key, out var iso)) return iso;
+        var hit = this._countries.FirstOrDefault(kv => key.Contains(kv.Key) || kv.Key.Contains(key));
+        if (hit.Value is not null) return hit.Value;
+        if (key is "us" or "usa" or "u.s." or "america") return "US";
+        if (key is "uk" or "britain") return "GB";
+        return null;
     }
+
+    private async Task<Dictionary<string, string>> LoadCountriesAsync(CancellationToken ct)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        using var doc = JsonDocument.Parse(await this._http.GetStringAsync("https://api.worldbank.org/v2/country?format=json&per_page=400", ct));
+        foreach (var c in doc.RootElement[1].EnumerateArray())
+        {
+            var region = c.GetProperty("region").GetProperty("value").GetString();
+            if (region == "Aggregates") continue;
+            var name = c.GetProperty("name").GetString();
+            var iso = c.GetProperty("iso2Code").GetString();
+            if (name is not null && iso is not null) map[name.ToLowerInvariant()] = iso;
+        }
+        return map;
+    }
+
+    private string Error(string tool, Exception ex)
+    {
+        this._log.LogWarning(ex, "{Tool} failed", tool);
+        return Json(new { error = $"{tool} failed: {ex.Message}" });
+    }
+
+    private static string? Str(JsonElement e, string name) => e.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
+    private static double? Num(JsonElement e, string name) => e.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.Number ? Math.Round(p.GetDouble(), 2) : null;
+    private static string? Trim(string? s, int max) => s is null || s.Length <= max ? s : s[..max] + "…";
+    private static string Json(object o) => JsonSerializer.Serialize(o, s_json);
 }

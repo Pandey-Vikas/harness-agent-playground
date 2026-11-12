@@ -43,6 +43,17 @@ public sealed class HarnessRuntime
     }
 
     public string ModelName { get; private set; } = string.Empty;
+
+    private volatile bool _autoApprove;
+
+    /// <summary>When on, the harness auto-approval rule approves protected tool calls without asking the human.</summary>
+    public bool AutoApprove
+    {
+        get => this._autoApprove;
+        set => this._autoApprove = value;
+    }
+
+    private ValueTask<bool> AutoApproveRule(ToolAutoApprovalRuleContext _) => ValueTask.FromResult(this._autoApprove);
     public string Endpoint { get; private set; } = string.Empty;
 
     public IReadOnlyList<HarnessScenario> Scenarios => ScenarioCatalog.All;
@@ -81,6 +92,9 @@ public sealed class HarnessRuntime
         await this._sessionLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            if (scenario.Id != IncidentCommanderScenario.Id)
+                this._services.GetRequiredService<LiveTelemetry>().ClearFault(null, "scenario changed");
+
             var artifactsDir = Path.Combine(FindRepoRoot(), "data", "artifacts", scenario.Id);
             Directory.CreateDirectory(artifactsDir);
 
@@ -120,15 +134,16 @@ public sealed class HarnessRuntime
             if (skills is { Count: > 0 })
             {
                 options.AgentSkillsSource = new AgentInMemorySkillsSource(skills);
-                // Reading skill instructions is safe; running scripts would still need a human.
                 options.ToolApprovalAgentOptions = new ToolApprovalAgentOptions
                 {
-                    AutoApprovalRules = [AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule]
+                    // Reading skill instructions is safe; the second rule is the human-controlled auto-approve switch.
+                    AutoApprovalRules = [AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule, this.AutoApproveRule]
                 };
             }
             else
             {
                 options.DisableAgentSkillsProvider = true;
+                options.ToolApprovalAgentOptions = new ToolApprovalAgentOptions { AutoApprovalRules = [this.AutoApproveRule] };
             }
             if (hasBackground) options.BackgroundAgents = background;
 
@@ -391,7 +406,8 @@ public sealed class HarnessRuntime
             {
                 var call = a.ToolCall as FunctionCallContent;
                 return new PendingApprovalDto(a.RequestId, call?.Name ?? "tool", call?.Arguments);
-            }).ToList());
+            }).ToList(),
+            AutoApprove: this._autoApprove);
     }
 
     private List<string> ExercisedWithTracing(ActiveSession current)
@@ -496,7 +512,8 @@ public sealed record StatusSnapshot(
     IReadOnlyList<string> HighlightedCapabilities,
     string Model,
     string Endpoint,
-    IReadOnlyList<PendingApprovalDto> PendingApprovals);
+    IReadOnlyList<PendingApprovalDto> PendingApprovals,
+    bool AutoApprove);
 
 public sealed record CapabilityRow(
     string Id,

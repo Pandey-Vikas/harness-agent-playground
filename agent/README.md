@@ -33,6 +33,8 @@ agent/
 | POST | `/api/approval` | `{ "decisions": [{ "id", "approved", "reason" }] }` resumes after an approval request (SSE) |
 | GET | `/api/artifacts` | Files the agent saved for the active scenario |
 | GET | `/api/artifacts/file?path=` | Download one file (path-traversal safe) |
+| GET, POST | `/api/approval-mode` | `{ "auto": true \| false }` manual vs auto tool approval |
+| GET, POST | `/api/chaos` | `{ "enable": true }` injects (or clears) the live SRE incident |
 
 ## Environment variables
 

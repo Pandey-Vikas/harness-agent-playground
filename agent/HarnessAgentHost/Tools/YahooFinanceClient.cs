@@ -17,6 +17,9 @@ public sealed class YahooFinanceClient
     private readonly SemaphoreSlim _crumbLock = new(1, 1);
     private string? _crumb;
 
+    /// <summary>Drops the cached crumb so the next quote-summary call renegotiates its session.</summary>
+    public void ResetSession() => this._crumb = null;
+
     public YahooFinanceClient(HttpClient http, ILogger<YahooFinanceClient> log)
     {
         this._http = http;
